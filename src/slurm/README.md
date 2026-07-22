@@ -12,15 +12,17 @@ lives in that one file.
 
 ## One-time setup: the conda environment
 
+CSF3 has no `anaconda` module -- conda comes from `miniforge3` instead. Confirmed
+module names for this account:
+
 ```bash
-module avail anaconda            # find the exact module name for your CSF3
-module load <ANACONDA_MODULE>    # e.g. apps/binapps/anaconda3/2023.09
+module load apps/binapps/conda/miniforge3/25.9.1
+module load cuda/12.6.2
 
 conda create -n lang2grasp python=3.10 -y
 conda activate lang2grasp
 
-module avail cuda                # find the CUDA version CSF3's GPU nodes provide
-pip install torch --index-url https://download.pytorch.org/whl/cu121   # match it
+pip install torch --index-url https://download.pytorch.org/whl/cu126   # matches cuda/12.6.2
 pip install -r requirements.txt  # from the repo root; robosuite/mujoco/sb3/etc.
 
 # Optional, only for the standalone DeliGrasp benchmark (src/extraction/deligrasp,
@@ -31,13 +33,17 @@ pip install -r src/extraction/requirements.txt
 Python 3.10 is a good choice here: `requirements.txt` pins `numpy<2.0` for
 robosuite 1.4.x/1.5.x's ABI, which 3.10 supports cleanly.
 
-Re-run `module load`/`conda activate lang2grasp` in every new shell (or job --
-`env.sh` does this for you inside a submitted script).
+Re-run both `module load` lines and `conda activate lang2grasp` in every new shell
+(or job -- `env.sh` does this for you inside a submitted script). If a future CSF3
+software update changes either module's version string, `module avail conda` /
+`module avail cuda` will show the new name -- update `env.sh`'s `CONDA_MODULE`/
+`CUDA_MODULE` (and rebuild the env against the new CUDA version if it changed) to
+match.
 
 ## Edit before submitting anything
 
-1. **`env.sh`**: fill in `<ANACONDA_MODULE>` (and `<CUDA_MODULE>` if your torch
-   build needs a matching module loaded at runtime).
+1. **`env.sh`**: `CONDA_MODULE`/`CUDA_MODULE` are already set to the values above.
+   Only touch these if CSF3's module names change.
 2. **Every `.slurm` file**: `#SBATCH --partition=gpuL` is a placeholder -- set it
    to your allocation's actual GPU partition. `extract_object_params.slurm` uses
    `<CPU_PARTITION>` instead since that stage needs no GPU.

@@ -1,6 +1,7 @@
 #!/bin/bash
-# Shared setup, sourced by every slurm/*.slurm script -- edit the two CSF3-specific
-# placeholders below once, and every job picks them up.
+# Shared setup, sourced by every slurm/*.slurm script. Module names below are
+# confirmed for this CSF3 account (`module avail` doesn't list an "anaconda"
+# module here -- conda comes from miniforge3 instead).
 #
 # CSF3 has historically run Grid Engine (`qsub`), not Slurm. Before relying on any
 # of these scripts, confirm `sbatch`/`squeue`/`scontrol` actually exist on your
@@ -9,16 +10,13 @@
 
 set -uo pipefail
 
-# --- EDIT ME: modules -------------------------------------------------------
-# Find the exact names with `module avail anaconda` / `module avail cuda` on CSF3.
-ANACONDA_MODULE="apps/binapps/anaconda3/2023.09"   # <-- EDIT
-CUDA_MODULE=""                                     # <-- EDIT (GPU jobs only), e.g. "libs/cuda/12.1.0"
+CONDA_MODULE="apps/binapps/conda/miniforge3/25.9.1"
+CUDA_MODULE="cuda/12.6.2"   # must match the `pip install torch --index-url .../cu126` used when
+                            # the conda env was created -- see src/slurm/README.md
 
 module purge
-module load "$ANACONDA_MODULE"
-if [ -n "$CUDA_MODULE" ]; then
-  module load "$CUDA_MODULE"   # must match whatever `pip install torch` was built against
-fi
+module load "$CONDA_MODULE"
+module load "$CUDA_MODULE"
 
 # --- Conda env ---------------------------------------------------------------
 # Created once, not part of any job -- see src/slurm/README.md.
