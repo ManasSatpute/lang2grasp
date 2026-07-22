@@ -281,7 +281,7 @@ tb/tb_1/events.out.tfevents...
 
 |     | `n_envs` | `n_threads` | why |
 |-----|---------:|------------:|-----|
-| SAC | 4        | 4           | gradient-bound; `gradient_steps=4` keeps the replay ratio at 1:1 |
+| SAC | 8        | 4           | gradient-bound; `gradient_steps=4` keeps the replay ratio at 1:1 |
 
 Each `.slurm` script should export `OMP_NUM_THREADS=1`. Not cosmetic: every
 `SubprocVecEnv` worker links BLAS, and several workers × an unpinned OpenMP pool each will

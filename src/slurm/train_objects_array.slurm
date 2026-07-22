@@ -15,7 +15,7 @@
 #SBATCH --partition=gpuL              # <-- EDIT if your allocation's GPU partition differs
 #SBATCH --gres=gpu:1
 #SBATCH --time=04:00:00               # <-- EDIT: keep TrainConfig.max_hours ~15 min below this
-#SBATCH --cpus-per-task=6
+#SBATCH --cpus-per-task=12
 #SBATCH --mem=32G
 #SBATCH --signal=B:USR1@300
 #SBATCH --array=0-5

@@ -20,7 +20,7 @@ REPLAY_BUFFER_NAME = "replay_buffer.pkl"
 CONFIG_SNAPSHOT = "config.json"
 
 #: Exit code meaning "I checkpointed cleanly and there is work left; please requeue."
-#: slurm/train.slurm keys off this. Anything else is a genuine success/failure.
+#: src/slurm/train.slurm keys off this. Anything else is a genuine success/failure.
 EXIT_REQUEUE = 42
 
 
