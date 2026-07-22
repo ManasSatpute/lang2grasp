@@ -12,6 +12,21 @@ Two details matter for correctness and are handled explicitly:
    silently biases every bootstrap target.
 2. ``info["is_success"]``. SB3's ``EvalCallback`` aggregates this key into
    ``eval/success_rate``. Without it you only ever see return, never task success.
+
+Optional grip-force-aware reward shaping (``EnvConfig.grip_force_shaping``) uses
+``ObjectParams.grip_force_min_N``/``grip_force_max_N``/``crush_force_N``/``spring_Npm``
+-- the same fields `extraction/deligrasp` uses for its standalone benchmark -- so an
+LLM-described object's force window actually influences this training loop too, not
+just the object's geometry/density/friction. Per-finger contact force is *estimated*
+from the Panda gripper's finger joint positions (``obs_dict["robot0_gripper_qpos"]``,
+always present for any gripper-equipped robot -- see ``robosuite.robots.robot.Robot.
+_create_arm_sensors``) via the same spring-compression model as
+``extraction/deligrasp/gripper.py``: reaction(aperture) = k * max(0, rest_width -
+aperture). It is an estimate, not a true contact-force sensor reading, and assumes a
+two-finger parallel gripper whose joint qpos sum to aperture the way Panda's does
+(confirmed against robosuite 1.5's ``panda_gripper.xml``: finger joints range [0, 0.04]
+and [-0.04, 0] metres, so aperture = qpos[0] - qpos[1] spans the Panda's ~80mm opening).
+A different gripper model would need this remapped.
 """
 
 from __future__ import annotations
@@ -62,6 +77,18 @@ class EnvConfig:
     #: robosuite Lift cube exactly (env_name="Lift", no ParamLift involved at all).
     object: ObjectParams | None = None
 
+    #: Add a grip-force-aware term to the reward each step, using `object`'s
+    #: grip_force_min_N/max_N/crush_force_N (see module docstring). Requires `object`
+    #: to be set. Off by default -- existing configs are byte-for-byte unaffected.
+    grip_force_shaping: bool = False
+    #: Reward added each step the estimated per-finger contact force falls inside
+    #: [object.grip_force_min_N, object.grip_force_max_N] -- a secure, non-crushing hold.
+    grip_force_bonus: float = 0.1
+    #: Reward subtracted each step the estimated per-finger contact force exceeds
+    #: object.crush_force_N. Deliberately larger than grip_force_bonus: crushing a
+    #: fragile object should outweigh several steps of a good hold.
+    crush_penalty: float = 1.0
+
     def __post_init__(self) -> None:
         # JSON round-trips a tuple back as a list. Normalise on construction so a
         # config and its reloaded snapshot compare equal, and so `rollout.py`
@@ -70,6 +97,8 @@ class EnvConfig:
         # Same round-trip concern: a loaded JSON snapshot hands back a plain dict.
         if isinstance(self.object, dict):
             self.object = ObjectParams(**self.object)
+        if self.grip_force_shaping and self.object is None:
+            raise ValueError("grip_force_shaping requires `object` to be set.")
 
 
 def _load_controller_config(controller_name: str, robot: str) -> dict[str, Any]:
@@ -136,6 +165,7 @@ class RobosuiteLiftEnv(gym.Env):
             low=-np.inf, high=np.inf, shape=(obs_dim,), dtype=np.float32
         )
         self._elapsed_steps = 0
+        self._grip_force_warned = False  # log the graceful-degradation warning once, not every step
         LOGGER.info(
             "Built %s/%s | obs_dim=%d act_dim=%d horizon=%d shaped=%s",
             self.cfg.task,
@@ -161,6 +191,38 @@ class RobosuiteLiftEnv(gym.Env):
         check = getattr(self._env, "_check_success", None)
         return bool(check()) if callable(check) else False
 
+    def _estimate_grip_force_N(self, obs_dict: dict[str, np.ndarray]) -> float | None:
+        """Estimate per-finger contact force (N) from gripper aperture, DeliGrasp-style.
+
+        Returns None (and warns once) if the expected observable isn't there -- e.g. a
+        gripper with a different joint convention than the two-finger Panda this was
+        written against. See module docstring for the aperture formula's derivation.
+        """
+        qpos = obs_dict.get("robot0_gripper_qpos")
+        if qpos is None or np.asarray(qpos).shape != (2,):
+            if not self._grip_force_warned:
+                LOGGER.warning(
+                    "grip_force_shaping: expected obs_dict['robot0_gripper_qpos'] with "
+                    "shape (2,), got %s. Disabling force-based reward shaping for this env.",
+                    None if qpos is None else np.asarray(qpos).shape,
+                )
+                self._grip_force_warned = True
+            return None
+
+        aperture_mm = (float(qpos[0]) - float(qpos[1])) * 1000.0
+        obj = self.cfg.object
+        compression_mm = max(0.0, obj.rest_width_mm - aperture_mm)
+        return obj.spring_Npm * compression_mm / 1000.0
+
+    def _grip_force_reward_term(self, force_N: float) -> float:
+        """Bonus for holding within the object's safe window, penalty for exceeding it."""
+        obj = self.cfg.object
+        if force_N > obj.crush_force_N:
+            return -self.cfg.crush_penalty
+        if obj.grip_force_min_N <= force_N <= obj.grip_force_max_N:
+            return self.cfg.grip_force_bonus
+        return 0.0
+
     # -------------------------------------------------------------- gym.Env API
 
     def reset(
@@ -184,14 +246,21 @@ class RobosuiteLiftEnv(gym.Env):
         )
         obs_dict, reward, _robosuite_done, info = self._env.step(action)
         self._elapsed_steps += 1
+        reward = float(reward)
+
+        info = dict(info)
+        if self.cfg.grip_force_shaping:
+            force_N = self._estimate_grip_force_N(obs_dict)
+            if force_N is not None:
+                reward += self._grip_force_reward_term(force_N)
+                info["grip_force_N"] = force_N
 
         success = self._is_success()
         terminated = bool(success and self.cfg.terminate_on_success)
         truncated = bool(self._elapsed_steps >= self.cfg.horizon) and not terminated
 
-        info = dict(info)
         info["is_success"] = success
-        return self._flatten(obs_dict), float(reward), terminated, truncated, info
+        return self._flatten(obs_dict), reward, terminated, truncated, info
 
     def render(self) -> np.ndarray | None:
         if self.render_mode == "human":

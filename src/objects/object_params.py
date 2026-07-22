@@ -8,18 +8,19 @@ Two groups of fields:
   density/friction quartet. ``friction`` is robosuite's own 3-tuple: (sliding,
   torsional, rolling).
 - **Grasp-descriptive fields** (``mass_class``, ``fragile``, ``grip_force_min_N``,
-  ``grip_force_max_N``) are *metadata* carried through the pipeline (extraction ->
-  training config -> rollout output) for now -- they do not currently change the SAC
-  reward or the physics. They're the natural hook for a future force-adaptive grasp
-  reward (holding a fragile object too hard = crushed, too soft = dropped), the same
-  idea `extraction/deligrasp` explores standalone, but wiring that into training is a
-  separate step from defining the schema.
-- **DeliGrasp fields** (``spring_Npm``, ``crush_force_N``) exist purely for
-  `extraction/deligrasp`'s spring-compression grasp simulator (see
-  `extraction/deligrasp/gripper.py` / `evaluate.py`). They're not used by the
-  robosuite/SAC path at all. Unlike ``grip_force_max_N`` (a friendly training-time
-  target range), ``crush_force_N`` is the literal contact force at which
-  `evaluate.py` marks a grasp "crushed" -- the two can and do differ in scale for
+  ``grip_force_max_N``) are metadata carried through the pipeline (extraction ->
+  training config -> rollout output). ``grip_force_min_N``/``grip_force_max_N``
+  additionally drive `rl/env.py`'s optional grip-force-aware reward shaping
+  (``EnvConfig.grip_force_shaping``, off by default); ``mass_class`` and ``fragile``
+  remain descriptive only -- they don't change the physics (``fragile`` objects
+  already get a low ``crush_force_N`` instead) or the reward directly.
+- **DeliGrasp fields** (``spring_Npm``, ``crush_force_N``) were authored for
+  `extraction/deligrasp`'s standalone spring-compression grasp simulator (see
+  `extraction/deligrasp/gripper.py` / `evaluate.py`), and are reused by `rl/env.py`'s
+  grip-force reward shaping to *estimate* per-finger contact force from gripper
+  aperture -- the same spring model, applied to the robosuite sim instead. Unlike
+  ``grip_force_max_N`` (a friendlier training-time target range), ``crush_force_N``
+  is the harder physical damage threshold; the two can and do differ in scale for
   the same object.
 
 Values are clamped to ranges that stay graspable by a Panda parallel-jaw gripper and

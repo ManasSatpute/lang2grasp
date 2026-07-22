@@ -6,18 +6,15 @@ import dataclasses
 import json
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Literal
+from typing import Any
 
 from rl.env import EnvConfig
-
-Algo = Literal["PPO", "SAC"]
 
 
 @dataclass
 class TrainConfig:
     """Hyper-parameters and run plumbing. Everything here lands in the run snapshot."""
 
-    algo: Algo = "SAC"
     seed: int = 0
     total_timesteps: int = 1_000_000
     n_envs: int = 1
@@ -27,8 +24,9 @@ class TrainConfig:
     #: also links BLAS, and n_envs x OMP threads will thrash a 12-core slot.
     n_threads: int = 2
 
-    #: VecNormalize + an off-policy replay buffer is a footgun: stored transitions
-    #: were normalised with statistics that keep drifting. On for PPO, off for SAC.
+    #: VecNormalize + an off-policy replay buffer (SAC's) is a footgun: stored
+    #: transitions were normalised with statistics that keep drifting. Off by default;
+    #: only turn on if you've reasoned through that interaction for your change.
     normalize_obs: bool = False
     normalize_reward: bool = False
 

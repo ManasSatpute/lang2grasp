@@ -1,4 +1,4 @@
-"""Local dev driver: train a SAC/PPO policy for every object snapshot, one
+"""Local dev driver: train a SAC policy for every object snapshot, one
 after another, in the same process. For real cluster runs use a SLURM job
 array instead -- this script is for quick iteration on a single machine.
 

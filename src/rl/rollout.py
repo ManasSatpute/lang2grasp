@@ -19,7 +19,7 @@ import logging
 from pathlib import Path
 
 import numpy as np
-from stable_baselines3 import PPO, SAC
+from stable_baselines3 import SAC
 from stable_baselines3.common.base_class import BaseAlgorithm
 
 from rl.config import TrainConfig, load_config
@@ -35,8 +35,6 @@ from rl.vec_env import build_vec_env
 
 LOGGER = logging.getLogger(__name__)
 
-ALGOS: dict[str, type[BaseAlgorithm]] = {"PPO": PPO, "SAC": SAC}
-
 
 def load_policy(
     run_dir: Path, model_rel: str, device: str = "auto"
@@ -47,8 +45,8 @@ def load_policy(
     if not model_path.exists():
         raise FileNotFoundError(f"No checkpoint at {model_path}")
 
-    model = ALGOS[cfg.algo].load(model_path, device=resolve_device(device))
-    LOGGER.info("Loaded %s from %s", cfg.algo, model_path)
+    model = SAC.load(model_path, device=resolve_device(device))
+    LOGGER.info("Loaded SAC from %s", model_path)
     return model, cfg
 
 

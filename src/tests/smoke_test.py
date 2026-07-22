@@ -12,7 +12,7 @@ Not a performance test. 3k steps will not lift the cube; it tells you the plumbi
 is sound before you spend a night on 1M steps.
 
 Usage (from the repo root):
-    PYTHONPATH=src python src/tests/smoke_test.py --algo SAC --steps 3000
+    PYTHONPATH=src python src/tests/smoke_test.py --steps 3000
 """
 
 from __future__ import annotations
@@ -40,25 +40,22 @@ LOGGER = logging.getLogger("smoke_test")
 ATOL = 1e-6
 
 
-def build_smoke_config(algo: str, steps: int, log_dir: Path) -> TrainConfig:
+def build_smoke_config(steps: int, log_dir: Path) -> TrainConfig:
     """A deliberately tiny config: short horizon, one env, frequent checkpoints."""
     return TrainConfig(
-        algo=algo,  # type: ignore[arg-type]
         seed=0,
         total_timesteps=steps,
         n_envs=1,
         n_threads=1,
         device="auto",
-        normalize_obs=(algo == "PPO"),
-        normalize_reward=(algo == "PPO"),
+        normalize_obs=False,
+        normalize_reward=False,
         checkpoint_freq=max(1, steps // 2),
         eval_freq=max(1, steps // 2),
         n_eval_episodes=1,
         log_dir=str(log_dir),
-        run_name=f"smoke_{algo}",
-        algo_kwargs=(
-            {"learning_starts": 100} if algo == "SAC" else {"n_steps": 256, "batch_size": 64}
-        ),
+        run_name="smoke_SAC",
+        algo_kwargs={"learning_starts": 100},
         env=EnvConfig(horizon=100),  # short episodes keep the test fast
     )
 
@@ -104,17 +101,16 @@ def assert_round_trip(run_dir: Path) -> None:
 def main() -> int:
     setup_logging()
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--algo", choices=["PPO", "SAC"], default="SAC")
     parser.add_argument("--steps", type=int, default=3000)
     parser.add_argument("--keep", action="store_true", help="Do not delete the temp run dir.")
     args = parser.parse_args()
 
     tmp = Path(tempfile.mkdtemp(prefix="lang2grasp_smoke_"))
     try:
-        cfg = build_smoke_config(args.algo, args.steps, tmp)
+        cfg = build_smoke_config(args.steps, tmp)
 
         # [1] is asserted inside train() via check_env() before any learning starts.
-        LOGGER.info("[1] Running check_env + training %s for %d steps...", args.algo, args.steps)
+        LOGGER.info("[1] Running check_env + training SAC for %d steps...", args.steps)
         run_dir, _ = train(cfg)
 
         assert_artifacts(run_dir, expect_vecnorm=cfg.normalize_obs)

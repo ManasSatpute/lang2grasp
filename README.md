@@ -1,6 +1,6 @@
 # lang2grasp
 
-Stock Stable-Baselines3 (PPO / SAC) on **robosuite `Lift`** with a **Franka Emika Panda**
+Stock Stable-Baselines3 **SAC** on **robosuite `Lift`** with a **Franka Emika Panda**
 arm, through a native **Gymnasium** interface, plus an LLM-driven pipeline that turns a
 text description of an object into the physical parameters (`ObjectParams`) that
 parameterise the sim. Built for a SLURM cluster with 1 GPU and 12 CPU cores per job.
@@ -17,8 +17,7 @@ lang2grasp/
 │   │   └── utils.py            # logging, seeding, device, threads, run dirs
 │   ├── configs/
 │   │   ├── policy/
-│   │   │   ├── sac.json        # 4 env workers, gradient_steps=4 (1:1 replay ratio)
-│   │   │   └── ppo.json        # 10 env workers + 2 learner threads
+│   │   │   └── sac.json        # 4 env workers, gradient_steps=4 (1:1 replay ratio)
 │   │   └── objects/
 │   │       ├── prompts.json    # 6 named text prompts, one per object
 │   │       └── <name>.json     # ObjectParams snapshots written by extract_object_params.py
@@ -46,7 +45,7 @@ lang2grasp/
 │   │   └── run_experiment.py        # standalone DeliGrasp benchmark runner (uses extraction/deligrasp_sim)
 │   ├── tests/
 │   │   └── smoke_test.py       # end-to-end: check_env + train + save/load round-trip + rollout
-│   ├── slurm/                  # placeholder for cluster job scripts (currently empty; see note below)
+│   ├── slurm/                  # CSF3 job scripts + env.sh + their own README (see note below)
 │   └── results/                # placeholder for experiment output (currently empty)
 ```
 
@@ -54,12 +53,12 @@ No install step. Every entry point below is written to be run **from the repo ro
 with `PYTHONPATH=src`, which makes `common`, `rl`, `objects`, `extraction`, `scripts`
 and `tests` importable as top-level packages.
 
-> **Note on `src/slurm/`:** this directory is currently empty. The `sbatch`/`.slurm`
-> commands in this README describe the intended cluster workflow (and the code in
-> `rl/train.py`/`rl/callbacks.py` that supports it — checkpoint-on-signal, exit-code
-> 42 for requeue, etc.), but the actual `.slurm` job scripts have not been (re)added
-> to this repo yet. Everything under "Run it" that shells out to `slurm/*.slurm` will
-> need those scripts written first; training/rollout via plain `python` works today.
+> **Note on `src/slurm/`:** contains the actual job scripts (written for CSF3,
+> Slurm-based) plus `env.sh` (conda env / `PYTHONPATH` / thread setup, sourced by
+> every script) and its own `README.md` with the one-time conda setup and a
+> checklist of placeholders (`gpuL` partition, `RUNS_DIR`, module names) to edit
+> before submitting anything. Training/rollout also work today via plain `python`,
+> with no SLURM involved at all.
 
 ## LLM-parameterised objects: prompt → SAC policy → Panda rollout
 
@@ -76,8 +75,8 @@ PYTHONPATH=src python src/scripts/train_all_objects.py --base-config src/configs
 #    ...or one object at a time:
 PYTHONPATH=src python src/scripts/train_object.py \
     --object src/configs/objects/raw_egg.json --base-config src/configs/policy/sac.json
-#    ...or on the cluster, one SLURM array task per object (once slurm/train_objects_array.slurm exists):
-sbatch slurm/train_objects_array.slurm
+#    ...or on the cluster, one SLURM array task per object:
+sbatch src/slurm/train_objects_array.slurm
 
 # 3. Roll every trained policy out against the Panda arm in robosuite/MuJoCo.
 PYTHONPATH=src python src/scripts/rollout_all_objects.py --runs-dir runs --episodes 20
@@ -97,15 +96,15 @@ grippy:
 | `brick` | box | no | 15–80 | heavy |
 
 **How it fits together.** `ObjectParams` (`src/objects/object_params.py`) holds
-three groups of fields: simulation fields (`shape`, `size`, `density`, `friction`)
-that map directly onto robosuite's primitive objects, grasp-descriptive fields
-(`mass_class`, `fragile`, `grip_force_min_N`/`max_N`) that are carried through the
-pipeline as metadata — they don't currently change the SAC reward or physics, but
-are the natural hook for a future force-adaptive grasp reward — and two fields
-(`spring_Npm`, `crush_force_N`) used only by `extraction/deligrasp`'s standalone
-grasp-simulation benchmark, which builds its ground truth directly from this same
-schema (`extraction/param_prompts.py`'s `PRIORS`) so both pipelines describe
-identical objects. `ParamLift`
+simulation fields (`shape`, `size`, `density`, `friction`) that map directly onto
+robosuite's primitive objects; descriptive fields (`mass_class`, `fragile`) carried
+through the pipeline as metadata; and force fields (`grip_force_min_N`/`max_N`,
+`spring_Npm`, `crush_force_N`) shared between `extraction/deligrasp`'s standalone
+grasp-simulation benchmark (which builds its ground truth directly from this same
+schema — `extraction/param_prompts.py`'s `PRIORS` — so both pipelines describe
+identical objects) and this training pipeline's **optional** grip-force-aware reward
+shaping (`EnvConfig.grip_force_shaping`, off by default — see `rl/env.py`'s module
+docstring for how contact force is estimated from gripper aperture). `ParamLift`
 (`src/objects/lift_object_task.py`) is a `robosuite.Lift` subclass whose
 `_load_model` builds the object from `shape`/`size`/`density`/`friction` instead of
 the stock red cube — every other `Lift` method (`reward`, `_check_success`, ...)
@@ -121,8 +120,10 @@ run ever calls an LLM.
 
 ## One edit before you start
 
-Each `.slurm` file (once added under `slurm/`) should set a `#SBATCH --partition=gpuL`
-line, and `train.slurm` should set:
+See `src/slurm/README.md` for the full checklist (conda env setup, module names,
+scheduler check). The two that matter most: every `.slurm` file's
+`#SBATCH --partition=gpuL` is a placeholder for your allocation's actual GPU
+partition, and `train.slurm`/`train_objects_array.slurm` set:
 
 ```bash
 RUNS_DIR="/scratch/${USER}/lang2grasp_runs"      # <-- must be shared storage
@@ -134,17 +135,15 @@ its own checkpoints. Lustre and NFS are fine; node-local `/tmp` is not.
 ## Run it
 
 ```bash
-sbatch slurm/check_gpu.slurm     # 1. gate: "hello world from cuda:0 ... sum = 27.0"
-sbatch slurm/smoke_test.slurm    # 2. gate: "SMOKE TEST PASSED"
+sbatch src/slurm/check_gpu.slurm     # 1. gate: "hello world from cuda:0 ... sum = 27.0"
+sbatch src/slurm/smoke_test.slurm    # 2. gate: "SMOKE TEST PASSED"
 
-JOB=$(sbatch --parsable slurm/train.slurm)      # 3.
+JOB=$(sbatch --parsable src/slurm/train.slurm)      # 3.
 tail -f logs/lift_train_${JOB}.out
 
 sbatch --export=ALL,RUN_DIR=/scratch/$USER/lang2grasp_runs/lift_${JOB}_s0 \
-       slurm/rollout.slurm                       # 4.
+       src/slurm/rollout.slurm                       # 4.
 ```
-
-PPO instead of SAC: `sbatch --export=ALL,CONFIG=src/configs/policy/ppo.json slurm/train.slurm`
 
 Cancel: `scancel $JOB`. Watch: `squeue --me`, `tensorboard --logdir /scratch/$USER/lang2grasp_runs`
 
@@ -155,7 +154,7 @@ Without a SLURM cluster, run the same steps directly:
 
 ```bash
 PYTHONPATH=src python src/scripts/check_gpu.py
-PYTHONPATH=src python src/tests/smoke_test.py --algo SAC --steps 3000
+PYTHONPATH=src python src/tests/smoke_test.py --steps 3000
 
 PYTHONPATH=src python -m rl.train --config src/configs/policy/sac.json
 PYTHONPATH=src python -m rl.rollout --run-dir runs/SAC_local --episodes 10
@@ -182,8 +181,8 @@ Artifacts, per run (under `runs/<run_name>/`):
 ```
 config.json            # written once; a resumed job keeps its original config
 final_model.zip
-replay_buffer.pkl      # SAC only; without it a resume restarts the critic cold
-vecnormalize.pkl       # PPO only
+replay_buffer.pkl      # without it a resume restarts the critic cold
+vecnormalize.pkl       # only present if normalize_obs/normalize_reward is on
 checkpoints/model_50000_steps.zip ...
 eval/best_model.zip, evaluations.npz
 tb/tb_1/events.out.tfevents...
@@ -194,18 +193,14 @@ tb/tb_1/events.out.tfevents...
 |     | `n_envs` | `n_threads` | why |
 |-----|---------:|------------:|-----|
 | SAC | 4        | 4           | gradient-bound; `gradient_steps=4` keeps the replay ratio at 1:1 |
-| PPO | 10       | 2           | throughput-bound; MuJoCo stepping is the bottleneck |
 
 Each `.slurm` script should export `OMP_NUM_THREADS=1`. Not cosmetic: every
-`SubprocVecEnv` worker links BLAS, and 10 workers × an unpinned OpenMP pool each will
+`SubprocVecEnv` worker links BLAS, and several workers × an unpinned OpenMP pool each will
 thrash a 12-core cgroup and run **slower than a single environment**.
 
-PPO's `n_steps × n_envs = 5120` divides exactly by `batch_size = 1280`. If you change
-`n_envs`, fix `batch_size` too.
-
-> **MuJoCo physics is CPU-only.** The GPU accelerates the policy network and offscreen
-> rendering, nothing else. SAC is gradient-bound and benefits. PPO with a `[256,256]` MLP
-> on state observations may be faster on CPU — benchmark `--device cpu` before assuming.
+> **MuJoCo physics is CPU-only.** The GPU accelerates the policy network, nothing else.
+> SAC is gradient-bound and benefits from it; benchmark `--device cpu` before assuming
+> the GPU actually helps your particular `net_arch`.
 
 ## Things that will silently ruin a run
 
@@ -225,9 +220,10 @@ the return curve craters at every requeue boundary.
 `budget + already_done` steps. `train.py` passes the *remaining* budget.
 
 **`VecNormalize` + off-policy replay.** A replay buffer holds observations normalised under
-statistics that keep moving. Hence `normalize_obs: false` for SAC, `true` for PPO. At load
-time `rollout.py` reloads `vecnormalize.pkl` with `training=False, norm_reward=False` — a PPO
-policy fed raw observations performs at chance and looks like a training failure.
+statistics that keep moving, so `normalize_obs`/`normalize_reward` default to `false`. If you
+turn them on, `rollout.py` reloads `vecnormalize.pkl` with `training=False, norm_reward=False` —
+a policy fed raw (unnormalised) observations after training with normalisation on performs at
+chance and looks like a training failure.
 
 **`SubprocVecEnv` + `fork`.** MuJoCo GL contexts do not survive `fork()`. `vec_env.py` forces
 `start_method="spawn"`.
@@ -236,8 +232,8 @@ policy fed raw observations performs at chance and looks like a training failure
 
 `Lift` is the easy robosuite task, not a solved-in-ten-minutes one. With the shaped reward,
 SAC typically shows a rising `eval/success_rate` in the low hundreds of thousands of steps.
-PPO needs roughly an order of magnitude more samples. If `rollout/ep_rew_mean` climbs while
-`eval/success_rate` stays at 0, the policy is farming the shaping term (usually hovering near
-the cube) — a reward-hacking signal, not a bug in this code.
+If `rollout/ep_rew_mean` climbs while `eval/success_rate` stays at 0, the policy is farming
+the shaping term (usually hovering near the cube) — a reward-hacking signal, not a bug in
+this code.
 
 Single-seed RL results aren't evidence. Run three seeds before believing a curve.

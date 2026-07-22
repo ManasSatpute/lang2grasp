@@ -1,4 +1,4 @@
-"""Stage 2: train one SAC/PPO policy for a single LLM-parameterised object.
+"""Stage 2: train one SAC policy for a single LLM-parameterised object.
 
 A thin wrapper around `rl.train.train` -- loads an `ObjectParams`
 snapshot (from `scripts/extract_object_params.py`), sets it on the env config,
@@ -26,7 +26,6 @@ from rl.train import train
 from common.utils import EXIT_REQUEUE, setup_logging
 
 _OVERRIDE_KEYS = (
-    "algo",
     "total_timesteps",
     "n_envs",
     "n_threads",
@@ -46,7 +45,6 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument("--base-config", type=Path, default=Path("src/configs/policy/sac.json"))
     # Mirrors rl.train's CLI overrides, so a per-object run tunes like any other.
-    parser.add_argument("--algo", choices=["PPO", "SAC"], default=None)
     parser.add_argument("--total-timesteps", dest="total_timesteps", type=int, default=None)
     parser.add_argument("--n-envs", dest="n_envs", type=int, default=None)
     parser.add_argument("--n-threads", dest="n_threads", type=int, default=None)
