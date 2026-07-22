@@ -6,7 +6,7 @@
 # works as a batch job. Real backends (anthropic/openai/groq) need outbound
 # internet AND an API key in the environment -- many HPC compute nodes block
 # outbound internet entirely. Check this works before relying on it:
-#   srun --partition=<CPU_PARTITION> --pty curl -sI https://api.anthropic.com
+#   srun --partition=serial --pty curl -sI https://api.anthropic.com
 # If that fails, run this stage on the login node instead (still just
 # `PYTHONPATH=src python src/scripts/extract_object_params.py --backend ...`,
 # no sbatch needed) and commit the resulting JSON snapshots -- training and
@@ -18,7 +18,7 @@
 #     ANTHROPIC_API_KEY=$ANTHROPIC_API_KEY src/slurm/extract_object_params.slurm
 
 #SBATCH --job-name=extract_params
-#SBATCH --partition=<CPU_PARTITION>   # <-- EDIT: a CPU-only queue; no GPU needed for this stage
+#SBATCH --partition=serial            # CSF3: single-core CPU queue, no GPU needed for this stage
 #SBATCH --time=00:10:00
 #SBATCH --cpus-per-task=1
 #SBATCH --mem=4G
