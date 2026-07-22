@@ -1,0 +1,9 @@
+# DeliGrasp reproduction only (this directory's deligrasp/, plus
+# ../scripts/run_experiment.py and ../scripts/plot_trajectory.py). A separate,
+# standalone LLM-grasp benchmark from the robosuite/SAC training pipeline --
+# see the repo root's requirements.txt for that (and for the *other* LLM
+# extraction pipeline, src/extraction/llm_backends.py's ObjectParams backends).
+numpy>=1.23
+matplotlib>=3.5           # only for `run_experiment.py --plot`
+# optional, only needed for --backend openai
+openai>=1.0

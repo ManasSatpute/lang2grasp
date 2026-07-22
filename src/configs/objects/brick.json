@@ -1,0 +1,27 @@
+{
+  "name": "brick",
+  "shape": "box",
+  "size": [
+    0.05,
+    0.03,
+    0.02
+  ],
+  "density": 1900.0,
+  "friction": [
+    0.7,
+    0.01,
+    0.001
+  ],
+  "rgba": [
+    0.6,
+    0.3,
+    0.25,
+    1.0
+  ],
+  "mass_class": "heavy",
+  "fragile": false,
+  "grip_force_min_N": 15.0,
+  "grip_force_max_N": 80.0,
+  "spring_Npm": 8000.0,
+  "crush_force_N": 1000.0
+}

@@ -1,0 +1,25 @@
+{
+  "name": "raw_egg",
+  "shape": "ball",
+  "size": [
+    0.02
+  ],
+  "density": 550.0,
+  "friction": [
+    0.2,
+    0.002,
+    0.0001
+  ],
+  "rgba": [
+    0.95,
+    0.93,
+    0.85,
+    1.0
+  ],
+  "mass_class": "light",
+  "fragile": true,
+  "grip_force_min_N": 1.0,
+  "grip_force_max_N": 4.0,
+  "spring_Npm": 3000.0,
+  "crush_force_N": 5.0
+}

@@ -1,0 +1,26 @@
+{
+  "name": "steel_bolt",
+  "shape": "cylinder",
+  "size": [
+    0.008,
+    0.03
+  ],
+  "density": 7850.0,
+  "friction": [
+    0.9,
+    0.01,
+    0.001
+  ],
+  "rgba": [
+    0.6,
+    0.6,
+    0.65,
+    1.0
+  ],
+  "mass_class": "light",
+  "fragile": false,
+  "grip_force_min_N": 10.0,
+  "grip_force_max_N": 60.0,
+  "spring_Npm": 6000.0,
+  "crush_force_N": 150.0
+}

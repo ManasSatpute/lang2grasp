@@ -1,0 +1,29 @@
+# Install torch first, matched to your CUDA module, so pip does not replace it:
+#   pip install torch --index-url https://download.pytorch.org/whl/cu126
+#   pip install -r requirements.txt
+
+# --- RL policy: robosuite/MuJoCo env + SAC training (src/rl, src/objects) --
+numpy>=1.23,<2.0          # robosuite 1.4.x predates the numpy 2 ABI break
+robosuite>=1.4.1,<1.6
+mujoco>=3.1,<4.0
+gymnasium>=0.29,<1.1
+stable-baselines3[extra]>=2.3,<3.0
+torch>=2.2
+tensorboard>=2.16
+
+pytest>=8.0               # reserved for future src/tests/ suites (smoke_test.py itself is a plain script)
+imageio[ffmpeg]>=2.34     # only for `VIDEO=1` rollouts
+
+# --- Optional: LLM object-parameter extraction (src/scripts/extract_object_params.py,
+#     src/extraction/param_extraction.py, src/extraction/llm_backends.py) ---------
+# Text prompt -> ObjectParams (shape/density/friction/grip-force/...), the schema
+# both this training pipeline and the DeliGrasp benchmark below share. Not required
+# for --backend mock (the default, offline, no API key). Install only the backend(s)
+# you use; each one imports its SDK lazily.
+# anthropic>=0.40
+# openai>=1.50
+# groq>=0.11
+
+# --- Optional: DeliGrasp reproduction (src/extraction/deligrasp, src/scripts/
+#     run_experiment.py) -- a separate, standalone LLM-grasp benchmark with its
+#     own lighter dependency set. See src/extraction/requirements.txt.

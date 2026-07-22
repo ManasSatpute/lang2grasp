@@ -1,0 +1,46 @@
+{
+  "algo": "SAC",
+  "seed": 0,
+  "total_timesteps": 1000000,
+
+  "n_envs": 4,
+  "n_threads": 4,
+  "device": "auto",
+
+  "normalize_obs": false,
+  "normalize_reward": false,
+
+  "checkpoint_freq": 50000,
+  "eval_freq": 25000,
+  "n_eval_episodes": 10,
+  "save_replay_buffer": true,
+
+  "max_hours": 3.75,
+  "resume": true,
+
+  "policy_kwargs": {
+    "net_arch": [256, 256]
+  },
+
+  "algo_kwargs": {
+    "learning_rate": 0.0003,
+    "buffer_size": 500000,
+    "learning_starts": 10000,
+    "batch_size": 256,
+    "tau": 0.005,
+    "gamma": 0.99,
+    "train_freq": 1,
+    "gradient_steps": 4,
+    "ent_coef": "auto"
+  },
+
+  "env": {
+    "task": "Lift",
+    "robot": "Panda",
+    "controller": "OSC_POSE",
+    "horizon": 500,
+    "control_freq": 20,
+    "reward_shaping": true,
+    "terminate_on_success": false
+  }
+}

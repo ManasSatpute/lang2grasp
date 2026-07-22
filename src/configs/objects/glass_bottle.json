@@ -1,0 +1,26 @@
+{
+  "name": "glass_bottle",
+  "shape": "cylinder",
+  "size": [
+    0.025,
+    0.09
+  ],
+  "density": 300.0,
+  "friction": [
+    0.25,
+    0.005,
+    0.0001
+  ],
+  "rgba": [
+    0.7,
+    0.85,
+    0.8,
+    0.5
+  ],
+  "mass_class": "light",
+  "fragile": true,
+  "grip_force_min_N": 2.0,
+  "grip_force_max_N": 8.0,
+  "spring_Npm": 4000.0,
+  "crush_force_N": 8.0
+}

@@ -1,0 +1,10 @@
+{
+  "objects": {
+    "glass_bottle": "a glass bottle -- fragile, light, needs a low grip force",
+    "steel_bolt": "a steel bolt -- rugged, light, fine with a high grip force",
+    "ceramic_mug": "a ceramic mug -- fragile, light-to-medium weight",
+    "rice_bag": "a bag of rice -- rugged, medium weight, doesn't care about grip force",
+    "raw_egg": "a raw egg -- extremely fragile, very light",
+    "brick": "a brick -- rugged, heavy"
+  }
+}

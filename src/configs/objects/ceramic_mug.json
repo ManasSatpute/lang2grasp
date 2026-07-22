@@ -1,0 +1,26 @@
+{
+  "name": "ceramic_mug",
+  "shape": "cylinder",
+  "size": [
+    0.04,
+    0.05
+  ],
+  "density": 900.0,
+  "friction": [
+    0.45,
+    0.005,
+    0.0001
+  ],
+  "rgba": [
+    0.95,
+    0.93,
+    0.85,
+    1.0
+  ],
+  "mass_class": "medium",
+  "fragile": true,
+  "grip_force_min_N": 3.0,
+  "grip_force_max_N": 12.0,
+  "spring_Npm": 3500.0,
+  "crush_force_N": 12.0
+}

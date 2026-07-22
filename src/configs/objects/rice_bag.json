@@ -1,0 +1,27 @@
+{
+  "name": "rice_bag",
+  "shape": "box",
+  "size": [
+    0.06,
+    0.04,
+    0.02
+  ],
+  "density": 750.0,
+  "friction": [
+    0.8,
+    0.01,
+    0.001
+  ],
+  "rgba": [
+    0.85,
+    0.8,
+    0.65,
+    1.0
+  ],
+  "mass_class": "medium",
+  "fragile": false,
+  "grip_force_min_N": 8.0,
+  "grip_force_max_N": 50.0,
+  "spring_Npm": 300.0,
+  "crush_force_N": 500.0
+}
