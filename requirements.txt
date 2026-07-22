@@ -24,6 +24,9 @@ imageio[ffmpeg]>=2.34     # only for `VIDEO=1` rollouts
 # openai>=1.50
 # groq>=0.11
 
-# --- Optional: DeliGrasp reproduction (src/extraction/deligrasp, src/scripts/
-#     run_experiment.py) -- a separate, standalone LLM-grasp benchmark with its
-#     own lighter dependency set. See src/extraction/requirements.txt.
+# --- DeliGrasp reproduction (src/extraction/deligrasp, src/scripts/run_experiment.py) --
+# A separate, standalone LLM-grasp benchmark from the robosuite/SAC pipeline above --
+# see extraction/README.md. Its own LLM backend (deligrasp/llm.py's OpenAIBackend)
+# reuses the same `openai` package as the optional block above; uncomment that one
+# line, it covers both.
+matplotlib>=3.5           # only for `run_experiment.py --plot`

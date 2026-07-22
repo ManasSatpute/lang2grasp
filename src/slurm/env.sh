@@ -12,19 +12,19 @@ set -uo pipefail
 
 CONDA_MODULE="apps/binapps/conda/miniforge3/25.9.1"
 CUDA_MODULE="cuda/12.6.2"   # must match the `pip install torch --index-url .../cu126` used when
-                            # the conda env was created -- see src/slurm/README.md
+                            # the conda env was created -- see the root README's "Setup" section
 
 module purge
 module load "$CONDA_MODULE"
 module load "$CUDA_MODULE"
 
 # --- Conda env ---------------------------------------------------------------
-# Created once, not part of any job -- see src/slurm/README.md.
+# Created once, not part of any job -- see the root README's "Setup" section.
 source "$(conda info --base)/etc/profile.d/conda.sh"
 conda activate lang2grasp
 
 # --- Repo paths ----------------------------------------------------------------
-# All sbatch commands in src/slurm/README.md are submitted from the repo root, so
+# All sbatch commands in the root README are submitted from the repo root, so
 # SLURM_SUBMIT_DIR is that root.
 export PYTHONPATH="${SLURM_SUBMIT_DIR}/src"
 cd "${SLURM_SUBMIT_DIR}"
