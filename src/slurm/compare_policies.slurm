@@ -12,6 +12,7 @@
 
 #SBATCH --job-name=lift_compare
 #SBATCH --partition=gpuL              # <-- EDIT if your allocation's GPU partition differs
+#SBATCH --gres=gpu:1
 #SBATCH --time=01:00:00
 #SBATCH --cpus-per-task=2
 #SBATCH --mem=8G
