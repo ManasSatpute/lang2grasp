@@ -358,7 +358,14 @@ function on every episode. `rl/env.py` computes both flags itself. There's a reg
 
 **The sparse default reward.** `Lift` defaults to `reward_shaping=False`. Random exploration
 on a 7-DoF arm essentially never lifts the cube, so the gradient is zero and the loss curve
-looks "stable" while nothing learns. The configs default to `reward_shaping: true`.
+looks "stable" while nothing learns. The configs default to `reward_shaping: true`. If you do
+train with `reward_shaping: false`, `train.py` calls `rl/sparse_seed.py` on fresh (non-resumed)
+runs: a scripted, non-learned reach/descend/grasp/lift heuristic rolls out against a throwaway
+env to find real successes and inserts their transitions directly into SAC's replay buffer,
+so the critic has non-zero reward to bootstrap from instead of waiting on luck. It only runs
+for `reward_shaping=False`; the default shaped path never touches it. Skipped (with a log
+warning) if `normalize_obs`/`normalize_reward` is on, since seeded transitions would need
+`VecNormalize` stats applied too.
 
 **Resuming without the replay buffer.** SAC reloaded with an empty buffer unlearns its critic;
 the return curve craters at every requeue boundary.

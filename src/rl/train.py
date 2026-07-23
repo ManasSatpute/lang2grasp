@@ -138,6 +138,15 @@ def train(cfg: TrainConfig) -> tuple[Path, bool]:
     callbacks, graceful = build_callbacks(cfg, run_dir, eval_env)
 
     resuming = model.num_timesteps > 0
+    if cfg.env.reward_shaping is False and not resuming:
+        # Sparse/"fixed" reward: random exploration essentially never lifts the cube,
+        # so the critic never sees a non-zero reward to learn from (see
+        # rl/sparse_seed.py). Seed a handful of real successes into the replay buffer
+        # before training starts. Skipped on resume: the buffer already has whatever
+        # a prior run collected, and re-seeding would just add duplicates.
+        from rl.sparse_seed import seed_replay_buffer_with_successes
+
+        seed_replay_buffer_with_successes(model, cfg)
     # SB3 gotcha: with reset_num_timesteps=False, `_setup_learn` does
     # `total_timesteps += self.num_timesteps`. Passing the global budget on a resume
     # would train for budget + already_done steps. Pass the *remaining* budget.

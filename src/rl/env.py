@@ -165,6 +165,7 @@ class RobosuiteLiftEnv(gym.Env):
         )
         self._elapsed_steps = 0
         self._grip_force_warned = False  # log the graceful-degradation warning once, not every step
+        self.last_obs_dict: dict[str, np.ndarray] = {}  # raw robosuite obs, e.g. for rl.sparse_seed
         LOGGER.info(
             "Built %s/%s | obs_dim=%d act_dim=%d horizon=%d shaped=%s",
             self.cfg.task,
@@ -235,13 +236,16 @@ class RobosuiteLiftEnv(gym.Env):
             # robosuite limitation, not a Gymnasium one.
             np.random.seed(seed)
         self._elapsed_steps = 0
-        return self._flatten(self._env.reset()), {"is_success": False}
+        obs_dict = self._env.reset()
+        self.last_obs_dict = obs_dict
+        return self._flatten(obs_dict), {"is_success": False}
 
     def step(self, action: np.ndarray) -> tuple[np.ndarray, float, bool, bool, dict[str, Any]]:
         action = np.clip(
             np.asarray(action, dtype=np.float64), self.action_space.low, self.action_space.high
         )
         obs_dict, reward, _robosuite_done, info = self._env.step(action)
+        self.last_obs_dict = obs_dict
         self._elapsed_steps += 1
         reward = float(reward)
 
