@@ -234,6 +234,11 @@ sbatch --export=ALL,RUN_DIR=/scratch/$USER/lang2grasp_runs/lift_${JOB}_s0 \
 sbatch src/slurm/rollout_all_objects.slurm   # every lift_<object> run under RUNS_DIR
 sbatch --export=ALL,PLOT=1,VIDEO=1 src/slurm/rollout_all_objects.slurm   # + plot + per-object video
 
+# Stage 3, live view: watch the MuJoCo viewer from your own machine while it runs
+# on a headless CSF3 node, via a VNC session -- see "Watching a rollout live" below.
+sbatch --export=ALL,RUN_DIR=/scratch/$USER/lang2grasp_runs/lift_${JOB}_s0 \
+    src/slurm/rollout_vnc.slurm
+
 # Stage 3, comparison: the "Baseline (stock Lift cube)" job above is the generic
 # policy -- compare it against the per-object runs from train_objects_array.slurm:
 sbatch --export=ALL,BASELINE_RUN_DIR=/scratch/$USER/lang2grasp_runs/lift_${JOB}_s0,PLOT=1 \
@@ -272,8 +277,36 @@ src/slurm/
   train_objects_array.slurm    # stage 2: all 6 objects as parallel array tasks
   rollout.slurm                # stage 3: roll out one run dir
   rollout_all_objects.slurm    # stage 3: roll out every lift_<object> run, results/plot/video
+  rollout_vnc.slurm            # stage 3: live MuJoCo viewer over VNC, see below
   compare_policies.slurm       # stage 3: generic baseline vs. per-object policies
 ```
+
+### Watching a rollout live
+
+`rollout.slurm`/`rollout_all_objects.slurm` render *offscreen* (`--video`) — a saved
+`.mp4` you `scp` down afterwards. To watch the actual MuJoCo viewer window update in
+real time while the job runs on a headless CSF3 node:
+
+```bash
+sbatch --export=ALL,RUN_DIR=/scratch/$USER/lang2grasp_runs/lift_${JOB}_s0 \
+    src/slurm/rollout_vnc.slurm
+tail -f logs/lift_rollout_vnc_<jobid>.out   # prints the node, VNC port, and password
+```
+
+Then, from your own machine, tunnel through the login node to the compute node the
+job landed on and connect a VNC viewer (e.g. TigerVNC Viewer) to `localhost:<port>`:
+
+```bash
+ssh -L <port>:localhost:<port> -J <you>@<csf3-login-host> <you>@<compute-node>
+```
+
+`rollout_vnc.slurm` tries a `turbovnc`/`tigervnc` module first, then falls back to
+`Xvfb`+`x11vnc` if both are on `$PATH`. **This is unverified against your actual CSF3
+allocation** — module names and whether compute nodes accept a second `ssh` hop are
+cluster-specific. If it fails, check CSF3's own docs for a "VNC"/"remote desktop"
+session (most HPC centres provide one) and run
+`python -m rl.rollout --run-dir "$RUN_DIR" --render` (see `rollout.py`'s new
+`--render` flag) inside that session instead.
 
 ## Training that survives the wall clock
 

@@ -10,6 +10,9 @@ Usage (from the repo root):
     PYTHONPATH=src python -m rl.rollout --run-dir runs/lift_123 --episodes 10
     PYTHONPATH=src python -m rl.rollout --run-dir runs/lift_123 \
         --model eval/best_model.zip --video out.mp4
+    # Live MuJoCo viewer window (needs a display -- see src/slurm/rollout_vnc.slurm
+    # for watching this from a headless Slurm node via VNC):
+    PYTHONPATH=src python -m rl.rollout --run-dir runs/lift_123 --render
 """
 
 from __future__ import annotations
@@ -67,6 +70,7 @@ def rollout(
     seed: int = 1234,
     device: str = "auto",
     video_path: Path | None = None,
+    render: bool = False,
     object_override: ObjectParams | None = None,
     model: BaseAlgorithm | None = None,
     cfg: TrainConfig | None = None,
@@ -86,15 +90,28 @@ def rollout(
     ``normalize_obs``/``normalize_reward``, its `VecNormalize` stats were fit on the
     *original* object's dynamics, so they're a mismatch for the override; harmless for
     the default config (`normalize_obs: false`), but worth knowing.
+
+    ``render`` opens robosuite's on-screen MuJoCo viewer (``render_mode="human"``)
+    and calls ``env.render()`` every step -- a live window, not a saved file.
+    Mutually exclusive with ``video_path`` (``rgb_array`` vs. ``human`` are different
+    ``render_mode``s). Needs a real or virtual display (``$DISPLAY``); on a headless
+    Slurm node, see ``src/slurm/rollout_vnc.slurm``.
     """
+    if render and video_path is not None:
+        raise ValueError(
+            "render and video_path are mutually exclusive -- render_mode is either "
+            "'human' (live window) or 'rgb_array' (offscreen, for video), not both."
+        )
     if model is None or cfg is None:
         model, cfg = load_policy(run_dir, model_rel, device)
 
     env_cfg: EnvConfig = cfg.env
-    if video_path is not None or object_override is not None:
+    if video_path is not None or render or object_override is not None:
         overrides: dict[str, object] = {}
         if video_path is not None:
             overrides["render_mode"] = "rgb_array"
+        if render:
+            overrides["render_mode"] = "human"
         if object_override is not None:
             overrides["object"] = object_override
         env_cfg = EnvConfig(**{**cfg.env.__dict__, **overrides})
@@ -139,6 +156,8 @@ def rollout(
             done = bool(dones[0])
             if video_path is not None:
                 frames.append(env.env_method("render", indices=0)[0])
+            elif render:
+                env.env_method("render", indices=0)
 
         returns.append(ep_return)
         lengths.append(ep_len)
@@ -197,6 +216,13 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--seed", type=int, default=1234)
     parser.add_argument("--device", default="auto")
     parser.add_argument("--video", dest="video_path", type=Path, default=None)
+    parser.add_argument(
+        "--render",
+        action="store_true",
+        help="Live MuJoCo viewer window (render_mode='human'). Needs a display; "
+        "mutually exclusive with --video. See src/slurm/rollout_vnc.slurm for a "
+        "headless Slurm node.",
+    )
     return parser.parse_args()
 
 
