@@ -1,9 +1,9 @@
 """Prompt template, JSON schema, and offline priors for object-parameter extraction.
 
-The 6 default objects (also in ``configs/objects/prompts.json``) span the grasp
-axes DeliGrasp cares about -- fragile vs. rugged, light vs. heavy, slick vs.
-grippy -- so a force-adaptive grasp policy (or, today, just varied SAC dynamics)
-sees meaningfully different objects rather than six near-identical boxes:
+The 6 default objects (also in ``configs/objects/prompts.json``) span the axes
+that matter for grasping -- fragile vs. rugged, light vs. heavy, slick vs.
+grippy -- so the SAC policy sees meaningfully different object dynamics rather
+than six near-identical boxes:
 
     glass_bottle  fragile, light,  low safe grip force
     steel_bolt    rugged,  light,  high grip force tolerated
@@ -93,10 +93,8 @@ JSON_SCHEMA = {
     "additionalProperties": False,
 }
 
-#: name -> raw fields dict, matching JSON_SCHEMA. Ground-truth-ish priors for the
-#: MockBackend, and also the single source of truth `extraction/deligrasp/objects.py`
-#: builds its `BENCHMARK` from -- so the DeliGrasp ground truth and the
-#: object-parameter extraction pipeline describe exactly the same objects.
+#: name -> raw fields dict, matching JSON_SCHEMA. Ground-truth-ish priors for
+#: MockBackend, the offline/deterministic default extraction backend.
 PRIORS: dict[str, dict] = {
     "glass_bottle": {
         "shape": "cylinder",

@@ -8,20 +8,18 @@ Two groups of fields:
   density/friction quartet. ``friction`` is robosuite's own 3-tuple: (sliding,
   torsional, rolling).
 - **Grasp-descriptive fields** (``mass_class``, ``fragile``, ``grip_force_min_N``,
-  ``grip_force_max_N``) are metadata carried through the pipeline (extraction ->
-  training config -> rollout output). ``grip_force_min_N``/``grip_force_max_N``
-  additionally drive `rl/env.py`'s optional grip-force-aware reward shaping
-  (``EnvConfig.grip_force_shaping``, off by default); ``mass_class`` and ``fragile``
-  remain descriptive only -- they don't change the physics (``fragile`` objects
-  already get a low ``crush_force_N`` instead) or the reward directly.
-- **DeliGrasp fields** (``spring_Npm``, ``crush_force_N``) were authored for
-  `extraction/deligrasp`'s standalone spring-compression grasp simulator (see
-  `extraction/deligrasp/gripper.py` / `evaluate.py`), and are reused by `rl/env.py`'s
-  grip-force reward shaping to *estimate* per-finger contact force from gripper
-  aperture -- the same spring model, applied to the robosuite sim instead. Unlike
-  ``grip_force_max_N`` (a friendlier training-time target range), ``crush_force_N``
-  is the harder physical damage threshold; the two can and do differ in scale for
-  the same object.
+  ``grip_force_max_N``, ``spring_Npm``, ``crush_force_N``) are metadata carried
+  through the pipeline (extraction -> training config -> rollout output), and drive
+  `rl/env.py`'s optional grip-force-aware reward shaping (``EnvConfig.grip_force_shaping``,
+  off by default): per-finger contact force is *estimated* from gripper aperture via
+  ``reaction_force_N`` (a spring-compression model using ``spring_Npm``), then
+  compared against ``grip_force_min_N``/``grip_force_max_N`` (reward) and
+  ``crush_force_N`` (penalty). Unlike ``grip_force_max_N`` (a friendlier
+  training-time target range), ``crush_force_N`` is the harder physical damage
+  threshold; the two can and do differ in scale for the same object. ``mass_class``
+  and ``fragile`` remain purely descriptive -- they don't change the physics
+  (``fragile`` objects already get a low ``crush_force_N`` instead) or the reward
+  directly.
 
 Values are clamped to ranges that stay graspable by a Panda parallel-jaw gripper and
 numerically stable in MuJoCo. An LLM extrapolating from a text prompt occasionally
@@ -67,18 +65,14 @@ _FRICTION_BOUNDS: tuple[tuple[float, float], tuple[float, float], tuple[float, f
 #: Newtons, per finger. Below ~0.1N nothing meaningfully resists gravity; above
 #: ~200N is well past what a Panda parallel-jaw gripper can exert.
 _GRIP_FORCE_RANGE = (0.1, 200.0)
-#: N/m, DeliGrasp-only. 20 ~ a very soft/compliant object, 10000 ~ a rigid one
-#: (brick-like); see `extraction/deligrasp/prompts.py`'s PROMPT_THINKER, which
-#: quotes the same 20-2000 range to the LLM as a rule of thumb.
+#: N/m. 20 ~ a very soft/compliant object, 10000 ~ a rigid one (brick-like).
 _SPRING_RANGE = (20.0, 10000.0)
-#: Newtons, per finger, DeliGrasp-only -- the literal contact force that breaks
-#: the object in the spring-compression simulator. Deliberately a much wider
-#: range than _GRIP_FORCE_RANGE since it's real physics, not a training target.
+#: Newtons, per finger -- the literal contact force that damages the object.
+#: Deliberately a much wider range than _GRIP_FORCE_RANGE since it's real
+#: physics, not a training target.
 _CRUSH_FORCE_RANGE = (0.1, 2000.0)
 
 _MASS_CLASSES: tuple[MassClass, ...] = ("light", "medium", "heavy")
-#: m/s^2, for `required_force_N`.
-_G = 9.81
 
 
 def _clamp(value: float, lo: float, hi: float, label: str) -> float:
@@ -113,11 +107,11 @@ class ObjectParams:
     grip_force_min_N: float = 1.0
     grip_force_max_N: float = 50.0
 
-    #: Object stiffness k (N/m) for `extraction/deligrasp`'s spring-compression
-    #: contact model. DeliGrasp-only, see module docstring.
+    #: Object stiffness k (N/m) for the spring-compression contact model
+    #: `reaction_force_N` uses. See module docstring.
     spring_Npm: float = 1000.0
-    #: Per-finger contact force (N) above which `extraction/deligrasp/evaluate.py`
-    #: scores the grasp "crushed". DeliGrasp-only, see module docstring.
+    #: Per-finger contact force (N) above which `rl/env.py`'s grip-force
+    #: reward shaping treats the grasp as crushing. See module docstring.
     crush_force_N: float = 50.0
 
     def __post_init__(self) -> None:
@@ -175,7 +169,7 @@ class ObjectParams:
 
     @property
     def mass_g(self) -> float:
-        """``mass_kg`` in grams -- the unit `extraction/deligrasp` works in."""
+        """``mass_kg`` in grams -- used by `scripts/rollout_all_objects.py`'s summary table."""
         return self.mass_kg * 1000.0
 
     @property
@@ -184,7 +178,7 @@ class ObjectParams:
 
         For a box this is the shortest full-extent dimension (the axis a
         parallel-jaw gripper would actually close on); for a cylinder/ball it's
-        the diameter. DeliGrasp-only, see module docstring.
+        the diameter. Used by `reaction_force_N`.
         """
         if self.shape == "box":
             width_m = min(2.0 * s for s in self.size)
@@ -196,12 +190,12 @@ class ObjectParams:
             width_m = 2.0 * radius
         return width_m * 1000.0
 
-    @property
-    def required_force_N(self) -> float:
-        """Minimum per-finger normal force needed to hold the object statically.
+    def reaction_force_N(self, aperture_mm: float) -> float:
+        """Spring-compression contact force (N) at a given gripper aperture.
 
-        Static equilibrium for a symmetric two-finger grasp:
-            2 * mu * N  >=  m * g     ->     N >= m*g / (2*mu)
-        Uses the sliding-friction component of ``friction``. DeliGrasp-only.
+        reaction = spring_Npm * max(0, rest_width_mm - aperture_mm) / 1000.
+        Used by `rl/env.py`'s grip-force reward shaping to estimate per-finger
+        contact force from the Panda gripper's aperture. See module docstring.
         """
-        return (self.mass_g / 1000.0) * _G / (2.0 * self.friction[0])
+        compression_mm = max(0.0, self.rest_width_mm - aperture_mm)
+        return self.spring_Npm * compression_mm / 1000.0

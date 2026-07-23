@@ -12,21 +12,14 @@ torch>=2.2
 tensorboard>=2.16
 
 pytest>=8.0               # reserved for future src/tests/ suites (smoke_test.py itself is a plain script)
-imageio[ffmpeg]>=2.34     # only for `VIDEO=1` rollouts
+imageio[ffmpeg]>=2.34     # only for rollout videos (rl.rollout --video, rollout_all_objects.py --video)
+matplotlib>=3.5           # only for rollout_all_objects.py --plot
 
 # --- Optional: LLM object-parameter extraction (src/scripts/extract_object_params.py,
 #     src/extraction/param_extraction.py, src/extraction/llm_backends.py) ---------
-# Text prompt -> ObjectParams (shape/density/friction/grip-force/...), the schema
-# both this training pipeline and the DeliGrasp benchmark below share. Not required
+# Text prompt -> ObjectParams (shape/density/friction/grip-force/...). Not required
 # for --backend mock (the default, offline, no API key). Install only the backend(s)
 # you use; each one imports its SDK lazily.
 # anthropic>=0.40
 # openai>=1.50
 # groq>=0.11
-
-# --- DeliGrasp reproduction (src/extraction/deligrasp, src/scripts/run_experiment.py) --
-# A separate, standalone LLM-grasp benchmark from the robosuite/SAC pipeline above --
-# see extraction/README.md. Its own LLM backend (deligrasp/llm.py's OpenAIBackend)
-# reuses the same `openai` package as the optional block above; uncomment that one
-# line, it covers both.
-matplotlib>=3.5           # only for `run_experiment.py --plot`

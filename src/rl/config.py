@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import argparse
 import dataclasses
 import json
 from dataclasses import dataclass, field
@@ -55,6 +56,34 @@ class TrainConfig:
 
     def to_dict(self) -> dict[str, Any]:
         return dataclasses.asdict(self)
+
+
+#: TrainConfig fields tunable from the CLI -- shared by rl.train and
+#: scripts/train_object.py so both entry points expose identical overrides.
+TRAIN_OVERRIDE_FIELDS: tuple[str, ...] = (
+    "total_timesteps",
+    "n_envs",
+    "n_threads",
+    "seed",
+    "device",
+    "log_dir",
+    "run_name",
+    "max_hours",
+    "resume",
+)
+
+
+def add_override_args(parser: argparse.ArgumentParser) -> None:
+    """Register CLI flags for :data:`TRAIN_OVERRIDE_FIELDS`, one per field."""
+    parser.add_argument("--total-timesteps", dest="total_timesteps", type=int, default=None)
+    parser.add_argument("--n-envs", dest="n_envs", type=int, default=None)
+    parser.add_argument("--n-threads", dest="n_threads", type=int, default=None)
+    parser.add_argument("--seed", type=int, default=None)
+    parser.add_argument("--device", default=None)
+    parser.add_argument("--log-dir", dest="log_dir", default=None)
+    parser.add_argument("--run-name", dest="run_name", default=None)
+    parser.add_argument("--max-hours", dest="max_hours", type=float, default=None)
+    parser.add_argument("--resume", action="store_true", default=None)
 
 
 def _build(cls: type, payload: dict[str, Any]) -> Any:

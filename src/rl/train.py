@@ -24,7 +24,7 @@ from stable_baselines3.common.env_checker import check_env
 from stable_baselines3.common.vec_env import VecEnv, VecNormalize
 
 from rl.callbacks import build_callbacks
-from rl.config import TrainConfig, load_config, save_config
+from rl.config import TrainConfig, add_override_args, load_config, save_config
 from rl.env import make_lift_env
 from common.utils import (
     CONFIG_SNAPSHOT,
@@ -181,15 +181,7 @@ def train(cfg: TrainConfig) -> tuple[Path, bool]:
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--config", type=Path, required=True, help="Path to a JSON config.")
-    parser.add_argument("--total-timesteps", dest="total_timesteps", type=int, default=None)
-    parser.add_argument("--n-envs", dest="n_envs", type=int, default=None)
-    parser.add_argument("--n-threads", dest="n_threads", type=int, default=None)
-    parser.add_argument("--seed", type=int, default=None)
-    parser.add_argument("--device", default=None)
-    parser.add_argument("--log-dir", dest="log_dir", default=None)
-    parser.add_argument("--run-name", dest="run_name", default=None)
-    parser.add_argument("--max-hours", dest="max_hours", type=float, default=None)
-    parser.add_argument("--resume", action="store_true", default=None)
+    add_override_args(parser)
     return parser.parse_args()
 
 

@@ -7,8 +7,7 @@ Every backend implements the same one-method interface and returns a plain
 ``crush_force_N``) -- validation and clamping happen once, in
 ``ObjectParams.__post_init__``, not here.
 
-SDKs are imported lazily inside each backend's ``__init__`` (same pattern as
-``extraction/deligrasp/llm.py``'s ``OpenAIBackend``) so ``requirements.txt``
+SDKs are imported lazily inside each backend's ``__init__`` so ``requirements.txt``
 doesn't have to hard-depend on any of them -- ``MockBackend`` needs none and
 is the default for tests, CI, and SLURM nodes with no API key or network.
 """

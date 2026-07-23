@@ -14,19 +14,18 @@ Two details matter for correctness and are handled explicitly:
    ``eval/success_rate``. Without it you only ever see return, never task success.
 
 Optional grip-force-aware reward shaping (``EnvConfig.grip_force_shaping``) uses
-``ObjectParams.grip_force_min_N``/``grip_force_max_N``/``crush_force_N``/``spring_Npm``
--- the same fields `extraction/deligrasp` uses for its standalone benchmark -- so an
-LLM-described object's force window actually influences this training loop too, not
-just the object's geometry/density/friction. Per-finger contact force is *estimated*
-from the Panda gripper's finger joint positions (``obs_dict["robot0_gripper_qpos"]``,
-always present for any gripper-equipped robot -- see ``robosuite.robots.robot.Robot.
-_create_arm_sensors``) via the same spring-compression model as
-``extraction/deligrasp/gripper.py``: reaction(aperture) = k * max(0, rest_width -
-aperture). It is an estimate, not a true contact-force sensor reading, and assumes a
-two-finger parallel gripper whose joint qpos sum to aperture the way Panda's does
-(confirmed against robosuite 1.5's ``panda_gripper.xml``: finger joints range [0, 0.04]
-and [-0.04, 0] metres, so aperture = qpos[0] - qpos[1] spans the Panda's ~80mm opening).
-A different gripper model would need this remapped.
+``ObjectParams.grip_force_min_N``/``grip_force_max_N``/``crush_force_N``/``spring_Npm``,
+so an LLM-described object's force window actually influences this training loop too,
+not just the object's geometry/density/friction. Per-finger contact force is
+*estimated* from the Panda gripper's finger joint positions
+(``obs_dict["robot0_gripper_qpos"]``, always present for any gripper-equipped robot --
+see ``robosuite.robots.robot.Robot._create_arm_sensors``) via
+``ObjectParams.reaction_force_N``'s spring-compression model. It is an estimate, not a
+true contact-force sensor reading, and assumes a two-finger parallel gripper whose
+joint qpos sum to aperture the way Panda's does (confirmed against robosuite 1.5's
+``panda_gripper.xml``: finger joints range [0, 0.04] and [-0.04, 0] metres, so
+aperture = qpos[0] - qpos[1] spans the Panda's ~80mm opening). A different gripper
+model would need this remapped.
 """
 
 from __future__ import annotations
@@ -192,7 +191,7 @@ class RobosuiteLiftEnv(gym.Env):
         return bool(check()) if callable(check) else False
 
     def _estimate_grip_force_N(self, obs_dict: dict[str, np.ndarray]) -> float | None:
-        """Estimate per-finger contact force (N) from gripper aperture, DeliGrasp-style.
+        """Estimate per-finger contact force (N) from gripper aperture.
 
         Returns None (and warns once) if the expected observable isn't there -- e.g. a
         gripper with a different joint convention than the two-finger Panda this was
@@ -210,9 +209,7 @@ class RobosuiteLiftEnv(gym.Env):
             return None
 
         aperture_mm = (float(qpos[0]) - float(qpos[1])) * 1000.0
-        obj = self.cfg.object
-        compression_mm = max(0.0, obj.rest_width_mm - aperture_mm)
-        return obj.spring_Npm * compression_mm / 1000.0
+        return self.cfg.object.reaction_force_N(aperture_mm)
 
     def _grip_force_reward_term(self, force_N: float) -> float:
         """Bonus for holding within the object's safe window, penalty for exceeding it."""
