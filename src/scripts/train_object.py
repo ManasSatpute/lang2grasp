@@ -34,6 +34,12 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--base-config", type=Path, default=Path("src/configs/policy/sac.json"))
     # Mirrors rl.train's CLI overrides, so a per-object run tunes like any other.
     add_override_args(parser)
+    parser.add_argument(
+        "--grip-force-shaping",
+        action="store_true",
+        help="Enable EnvConfig.grip_force_shaping (off by default) -- adds a reward "
+        "term using this object's extracted grip_force_min_N/max_N/crush_force_N.",
+    )
     return parser.parse_args()
 
 
@@ -46,6 +52,7 @@ def main() -> None:
 
     cfg = load_config(args.base_config, overrides=overrides)
     cfg.env.object = object_params
+    cfg.env.grip_force_shaping = args.grip_force_shaping
     if cfg.run_name is None:
         cfg.run_name = f"lift_{object_params.name}"
 

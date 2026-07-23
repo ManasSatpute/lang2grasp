@@ -54,11 +54,12 @@ lang2grasp/
 │   │   ├── train_object.py          # stage 2: train one object's SAC policy
 │   │   ├── train_all_objects.py     # stage 2: local sequential driver, all 6 objects
 │   │   ├── rollout_all_objects.py   # stage 3: roll out + results/plot/video, all 6 objects
-│   │   └── plot_rollout_results.py  # stage 3: success-rate/return plot for rollout_all_objects.py
+│   │   ├── plot_rollout_results.py  # stage 3: success-rate/return plots (per-object + comparison)
+│   │   └── compare_policies.py      # stage 3: generic baseline vs. per-object policies
 │   ├── tests/
 │   │   └── smoke_test.py        # end-to-end: check_env + train + save/load round-trip + rollout
 │   ├── slurm/                   # CSF3 job scripts -- see "Running on a Slurm cluster" below
-│   └── results/                 # rollout_all_objects.py output (CSV, plot, videos/)
+│   └── results/                 # rollout_all_objects.py / compare_policies.py output
 ```
 
 No install step beyond the one-time environment setup below. Every entry point is
@@ -127,6 +128,27 @@ PYTHONPATH=src python src/scripts/rollout_all_objects.py --runs-dir runs --episo
 #    GL context (EGL/OSMesa/GLFW -- set MUJOCO_GL if the default doesn't work headless).
 PYTHONPATH=src python src/scripts/rollout_all_objects.py --plot --video
 ```
+
+**Does extraction actually help?** `compare_policies.py` answers that by rolling a
+single *generic* policy (trained once, with `env.object` unset -- so neither its
+physics nor its reward ever sees an extracted parameter) out against each object's
+*real* physics, alongside that object's own dedicated policy from stage 2:
+
+```bash
+# Train the generic baseline once (this is just rl.train with no --object):
+PYTHONPATH=src python -m rl.train --config src/configs/policy/sac.json --run-name lift_baseline
+
+# Compare it against the per-object policies trained above:
+PYTHONPATH=src python src/scripts/compare_policies.py \
+    --baseline-run-dir runs/lift_baseline --plot
+```
+
+Writes `src/results/policy_comparison.csv` (always) and, with `--plot`,
+`policy_comparison.png` -- a grouped success-rate/return chart, generic vs.
+object-aware, per object. Per-object training can also optionally turn on
+grip-force-aware reward shaping for a 3-way comparison:
+`train_object.py --grip-force-shaping` (off by default, same as `EnvConfig`'s own
+default -- see "How it fits together" below).
 
 **The 6 default objects** (`src/configs/objects/prompts.json`) span the axes that matter
 for grasping, not just geometry — fragile vs. rugged, light vs. heavy, slick vs.
@@ -212,6 +234,11 @@ sbatch --export=ALL,RUN_DIR=/scratch/$USER/lang2grasp_runs/lift_${JOB}_s0 \
 sbatch src/slurm/rollout_all_objects.slurm   # every lift_<object> run under RUNS_DIR
 sbatch --export=ALL,PLOT=1,VIDEO=1 src/slurm/rollout_all_objects.slurm   # + plot + per-object video
 
+# Stage 3, comparison: the "Baseline (stock Lift cube)" job above is the generic
+# policy -- compare it against the per-object runs from train_objects_array.slurm:
+sbatch --export=ALL,BASELINE_RUN_DIR=/scratch/$USER/lang2grasp_runs/lift_${JOB}_s0,PLOT=1 \
+    src/slurm/compare_policies.slurm
+
 # Cancel / watch, same as any Slurm job:
 scancel $JOB
 squeue --me
@@ -245,6 +272,7 @@ src/slurm/
   train_objects_array.slurm    # stage 2: all 6 objects as parallel array tasks
   rollout.slurm                # stage 3: roll out one run dir
   rollout_all_objects.slurm    # stage 3: roll out every lift_<object> run, results/plot/video
+  compare_policies.slurm       # stage 3: generic baseline vs. per-object policies
 ```
 
 ## Training that survives the wall clock

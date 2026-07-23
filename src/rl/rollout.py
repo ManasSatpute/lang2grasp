@@ -15,6 +15,7 @@ Usage (from the repo root):
 from __future__ import annotations
 
 import argparse
+import json
 import logging
 from pathlib import Path
 
@@ -24,6 +25,7 @@ from stable_baselines3.common.base_class import BaseAlgorithm
 
 from rl.config import TrainConfig, load_config
 from rl.env import EnvConfig
+from objects.object_params import ObjectParams
 from common.utils import (
     CONFIG_SNAPSHOT,
     FINAL_MODEL_NAME,
@@ -50,6 +52,14 @@ def load_policy(
     return model, cfg
 
 
+def load_run_object_params(run_dir: Path) -> ObjectParams | None:
+    """The `ObjectParams` a run's `config.json` snapshot carries, or None for the
+    stock-cube baseline (`env.object` unset at train time)."""
+    config = json.loads((run_dir / CONFIG_SNAPSHOT).read_text())
+    object_payload = config.get("env", {}).get("object")
+    return ObjectParams(**object_payload) if object_payload else None
+
+
 def rollout(
     run_dir: Path,
     model_rel: str = FINAL_MODEL_NAME,
@@ -57,13 +67,37 @@ def rollout(
     seed: int = 1234,
     device: str = "auto",
     video_path: Path | None = None,
+    object_override: ObjectParams | None = None,
+    model: BaseAlgorithm | None = None,
+    cfg: TrainConfig | None = None,
 ) -> dict[str, float]:
-    """Roll the loaded policy out and return aggregate metrics."""
-    model, cfg = load_policy(run_dir, model_rel, device)
+    """Roll the loaded policy out and return aggregate metrics.
+
+    ``model``/``cfg`` let a caller pass an already-loaded policy (via
+    :func:`load_policy`) instead of reloading it from ``run_dir`` -- useful when
+    rolling the same model out repeatedly, e.g. against several ``object_override``s.
+
+    ``object_override`` evaluates the policy against a *different* object's physics
+    than the one ``run_dir`` was trained on: the env is rebuilt from the run's own
+    ``cfg.env`` (matching horizon/controller/obs_keys/etc.) with only ``object``
+    replaced. Comparing a generically-trained policy (``run_dir``'s own ``env.object``
+    is ``None``) against each LLM-described object's real physics is the main use
+    case -- see `scripts/compare_policies.py`. If the run used
+    ``normalize_obs``/``normalize_reward``, its `VecNormalize` stats were fit on the
+    *original* object's dynamics, so they're a mismatch for the override; harmless for
+    the default config (`normalize_obs: false`), but worth knowing.
+    """
+    if model is None or cfg is None:
+        model, cfg = load_policy(run_dir, model_rel, device)
 
     env_cfg: EnvConfig = cfg.env
-    if video_path is not None:
-        env_cfg = EnvConfig(**{**cfg.env.__dict__, "render_mode": "rgb_array"})
+    if video_path is not None or object_override is not None:
+        overrides: dict[str, object] = {}
+        if video_path is not None:
+            overrides["render_mode"] = "rgb_array"
+        if object_override is not None:
+            overrides["object"] = object_override
+        env_cfg = EnvConfig(**{**cfg.env.__dict__, **overrides})
 
     vecnorm = run_dir / VECNORM_NAME
     env = build_vec_env(

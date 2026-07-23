@@ -1,5 +1,4 @@
 {
-  "algo": "SAC",
   "seed": 0,
   "total_timesteps": 1000000,
 

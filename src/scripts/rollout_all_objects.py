@@ -30,11 +30,9 @@ from __future__ import annotations
 
 import argparse
 import csv
-import json
 from pathlib import Path
 
-from rl.rollout import rollout
-from objects.object_params import ObjectParams
+from rl.rollout import load_run_object_params, rollout
 from common.utils import CONFIG_SNAPSHOT, setup_logging
 
 #: Full per-object metric set written to the CSV -- a superset of what the
@@ -79,13 +77,6 @@ def parse_args() -> argparse.Namespace:
     return parser.parse_args()
 
 
-def _load_object_params(run_dir: Path) -> ObjectParams | None:
-    """None for the stock-cube baseline (`env.object` unset at train time)."""
-    config = json.loads((run_dir / CONFIG_SNAPSHOT).read_text())
-    object_payload = config.get("env", {}).get("object")
-    return ObjectParams(**object_payload) if object_payload else None
-
-
 def main() -> None:
     setup_logging()
     args = parse_args()
@@ -101,7 +92,7 @@ def main() -> None:
     rows = []
     for run_dir in run_dirs:
         object_name = run_dir.name.removeprefix("lift_")
-        object_params = _load_object_params(run_dir)
+        object_params = load_run_object_params(run_dir)
         metrics = rollout(run_dir, episodes=args.episodes, seed=args.seed, device=args.device)
         rows.append(
             {
