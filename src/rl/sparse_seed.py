@@ -8,11 +8,13 @@ cube by chance with a 7-DoF arm, so the replay buffer fills with all-zero-reward
 transitions and the critic never sees a gradient -- hence the ~0% success rate.
 
 This module runs a scripted, non-learned reach -> descend -> grasp -> lift heuristic
-against a throwaway single env to *find* a handful of real successes before training
-starts, and inserts their transitions directly into SAC's replay buffer so the critic
-has real reward signal to bootstrap from. It only ever runs when the caller
-(``rl/train.py``) checks ``cfg.env.reward_shaping is False`` first -- the shaped
-(default) path never imports or calls this.
+(``rl/scripted_policy.ScriptedPickPolicy``) against a throwaway single env to *find* a
+handful of real successes before training starts, and inserts their transitions
+directly into SAC's replay buffer so the critic has real reward signal to bootstrap
+from. It only ever runs when the caller (``rl/train.py``) checks
+``cfg.env.reward_shaping is False`` first -- the shaped (default) path never imports or
+calls this. For rolling the same heuristic out standalone (no SAC involved at all), see
+``scripts/scripted_rollout.py``.
 """
 
 from __future__ import annotations
@@ -24,70 +26,9 @@ from stable_baselines3 import SAC
 
 from rl.config import TrainConfig
 from rl.env import RobosuiteLiftEnv
+from rl.scripted_policy import MIN_ACTION_DIM, ScriptedPickPolicy
 
 LOGGER = logging.getLogger(__name__)
-
-_HOVER_HEIGHT_M = 0.08
-_XY_TOL_M = 0.015
-_DESCEND_TOL_M = 0.012
-_GRASP_HOLD_STEPS = 10
-_GAIN = 4.0
-_MIN_ACTION_DIM = 4  # 3 position deltas + >=1 gripper dim
-
-
-class _ScriptedPickPolicy:
-    """Proportional-control reach/descend/grasp/lift heuristic. Not a learned policy.
-
-    Just needs to succeed occasionally so the replay buffer gets non-zero-reward
-    transitions. Reads world-frame ``cube_pos`` / ``robot0_eef_pos`` off the raw
-    robosuite obs dict (``RobosuiteLiftEnv.last_obs_dict``); degrades gracefully
-    (``act`` returns ``None``) if either key is missing, e.g. a task/robot this
-    wasn't written against.
-    """
-
-    def __init__(
-        self, action_low: np.ndarray, action_high: np.ndarray, rng: np.random.Generator
-    ) -> None:
-        self._low = action_low
-        self._high = action_high
-        self._hover_height = _HOVER_HEIGHT_M * float(rng.uniform(0.7, 1.3))
-        self._gain = _GAIN * float(rng.uniform(0.8, 1.2))
-        self._phase = "approach"
-        self._grasp_steps = 0
-
-    def act(self, obs_dict: dict[str, np.ndarray]) -> np.ndarray | None:
-        cube_pos = obs_dict.get("cube_pos")
-        eef_pos = obs_dict.get("robot0_eef_pos")
-        if cube_pos is None or eef_pos is None:
-            return None
-        cube_pos = np.asarray(cube_pos, dtype=np.float64)
-        eef_pos = np.asarray(eef_pos, dtype=np.float64)
-        xy_err = float(np.linalg.norm(cube_pos[:2] - eef_pos[:2]))
-
-        if self._phase == "approach":
-            target = cube_pos + np.array([0.0, 0.0, self._hover_height])
-            if xy_err < _XY_TOL_M:
-                self._phase = "descend"
-            gripper = -1.0
-        elif self._phase == "descend":
-            target = cube_pos
-            if xy_err < _DESCEND_TOL_M and abs(cube_pos[2] - eef_pos[2]) < _DESCEND_TOL_M:
-                self._phase = "grasp"
-            gripper = -1.0
-        elif self._phase == "grasp":
-            target = eef_pos  # hold position while the fingers close
-            self._grasp_steps += 1
-            if self._grasp_steps >= _GRASP_HOLD_STEPS:
-                self._phase = "lift"
-            gripper = 1.0
-        else:  # lift
-            target = eef_pos + np.array([0.0, 0.0, 0.05])
-            gripper = 1.0
-
-        action = np.zeros_like(self._low)
-        action[:3] = self._gain * (target - eef_pos)
-        action[-1] = gripper
-        return np.clip(action, self._low, self._high)
 
 
 def _rollout_scripted_episode(
@@ -95,10 +36,10 @@ def _rollout_scripted_episode(
 ) -> tuple[list[tuple], bool]:
     """One scripted episode. Returns (transitions, succeeded)."""
     low, high = env.action_space.low, env.action_space.high
-    if low.shape[0] < _MIN_ACTION_DIM:
+    if low.shape[0] < MIN_ACTION_DIM:
         return [], False
 
-    policy = _ScriptedPickPolicy(low, high, rng)
+    policy = ScriptedPickPolicy(low, high, rng)
     obs, _ = env.reset()
     transitions: list[tuple] = []
     succeeded = False
