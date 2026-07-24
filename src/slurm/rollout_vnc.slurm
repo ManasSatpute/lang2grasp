@@ -24,6 +24,7 @@
 
 #SBATCH --job-name=lift_rollout_vnc
 #SBATCH --partition=gpuL              # <-- EDIT if your allocation's GPU partition differs
+#SBATCH --gres=gpu:1
 #SBATCH --time=00:30:00
 #SBATCH --cpus-per-task=2
 #SBATCH --mem=8G
