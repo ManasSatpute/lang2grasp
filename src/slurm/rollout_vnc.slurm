@@ -12,7 +12,8 @@
 #
 # CAVEAT -- this is best-effort, not verified against your actual CSF3 allocation.
 # It needs *some* VNC server on the compute node, tried in this order:
-#   1. a `turbovnc` or `tigervnc` module (module avail turbovnc / tigervnc / vnc)
+#   1. `vncserver` (TurboVNC/TigerVNC) -- via a module if one exists, but a
+#      module isn't required: on CSF3 it's a plain OS package already on $PATH
 #   2. `Xvfb` + `x11vnc`, if both are already on $PATH
 # If neither exists, check CSF3's own docs for a "VNC" / "remote desktop" /
 # "interactive GUI session" page -- most HPC centres document one, and running
@@ -58,7 +59,10 @@ export MUJOCO_GL=glfw
 VNC_PASS=$(head -c 12 /dev/urandom | base64 | tr -dc 'a-zA-Z0-9' | head -c 10)
 
 start_turbovnc() {
-  module load turbovnc 2>/dev/null || module load tigervnc 2>/dev/null || return 1
+  # A module isn't required -- some systems (e.g. CSF3) ship `vncserver` as a
+  # plain OS package with no module to load, so a failed `module load` here
+  # isn't fatal on its own; only bail if `vncserver` is nowhere on PATH either.
+  module load turbovnc 2>/dev/null || module load tigervnc 2>/dev/null || true
   command -v vncserver >/dev/null 2>&1 || return 1
   vncserver "$DISPLAY" -geometry 1024x768 -depth 24 -localhost -SecurityTypes VncAuth \
       < <(printf '%s\n%s\nn\n' "$VNC_PASS" "$VNC_PASS")
