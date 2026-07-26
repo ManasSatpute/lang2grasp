@@ -100,21 +100,46 @@ class EnvConfig:
             raise ValueError("grip_force_shaping requires `object` to be set.")
 
 
-def _load_controller_config(controller_name: str, robot: str) -> dict[str, Any]:
+def resolve_controller_config(controller_name: str, robot: str) -> dict[str, Any]:
     """Return a controller config across the robosuite 1.4 / 1.5 API split.
 
-    robosuite 1.5 replaced ``load_controller_config(default_controller=...)`` with
-    composite (per-body-part) controllers. ``"BASIC"`` is the composite equivalent
-    of the old ``"OSC_POSE"`` arm controller plus a binary gripper. On 1.5 the
-    ``controller`` field in the JSON config is therefore ignored.
+    robosuite 1.5 replaced the flat ``load_controller_config(default_controller=...)``
+    dict with a composite (per-body-part) config. Composite configs are looked up by
+    *composite* name (e.g. ``"BASIC"``) in ``REGISTERED_COMPOSITE_CONTROLLERS_DICT`` --
+    ``"OSC_POSE"``/``"OSC_POSITION"``/``"JOINT_VELOCITY"``/etc. are *part* (single-arm)
+    controller names, and asserting one of those against that registry crashes.
+
+    A hardcoded ``"BASIC"`` here would have silently discarded ``controller_name``
+    (it happens to match "BASIC" for the OSC_POSE default this project ships, but
+    would keep silently landing there for any other value in a config's ``controller``
+    field). Instead, use robosuite's own upgrade path: load the named part-controller
+    block, then let ``refactor_composite_controller_config`` wrap it into the composite
+    shape -- confirmed against the installed robosuite 1.5.1 source
+    (``robosuite/controllers/composite/composite_controller_factory.py``).
     """
     try:
-        from robosuite.controllers import load_composite_controller_config
+        from robosuite.controllers import load_part_controller_config
+        from robosuite.controllers.composite.composite_controller_factory import (
+            is_part_controller_config,
+            refactor_composite_controller_config,
+        )
     except ImportError:  # robosuite < 1.5
         from robosuite.controllers import load_controller_config
 
         return load_controller_config(default_controller=controller_name)
-    return load_composite_controller_config(controller="BASIC", robot=robot)
+
+    part_cfg = load_part_controller_config(default_controller=controller_name)
+    assert is_part_controller_config(part_cfg), (
+        f"{controller_name!r} did not resolve to a part controller config: {part_cfg!r}"
+    )
+    # Single-arm robots (Panda included) are keyed "right" in robosuite's composite
+    # body_parts dict -- this project's env has no bimanual/mobile-base support.
+    composite = refactor_composite_controller_config(part_cfg, robot, ["right"])
+    assert composite["body_parts"]["right"]["type"] == part_cfg["type"], (
+        f"expected {controller_name!r} to land in body_parts['right'], got "
+        f"{composite['body_parts']['right'].get('type')!r}"
+    )
+    return composite
 
 
 class RobosuiteLiftEnv(gym.Env):
@@ -138,10 +163,18 @@ class RobosuiteLiftEnv(gym.Env):
             env_name = "ParamLift"
             object_kwargs["object_params"] = self.cfg.object
 
+        self.resolved_controller_config = resolve_controller_config(self.cfg.controller, self.cfg.robot)
+        LOGGER.info(
+            "Resolved controller %r for %s -> %s",
+            self.cfg.controller,
+            self.cfg.robot,
+            self.resolved_controller_config,
+        )
+
         self._env = suite.make(
             env_name=env_name,
             robots=self.cfg.robot,
-            controller_configs=_load_controller_config(self.cfg.controller, self.cfg.robot),
+            controller_configs=self.resolved_controller_config,
             has_renderer=self.render_mode == "human",
             has_offscreen_renderer=self.render_mode == "rgb_array",
             use_camera_obs=False,  # state-only: keeps the MLP policy small and fast

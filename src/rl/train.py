@@ -14,6 +14,7 @@ Usage (from the repo root):
 from __future__ import annotations
 
 import argparse
+import json
 import logging
 import sys
 from pathlib import Path
@@ -25,9 +26,10 @@ from stable_baselines3.common.vec_env import VecEnv, VecNormalize
 
 from rl.callbacks import build_callbacks
 from rl.config import TrainConfig, add_override_args, load_config, save_config
-from rl.env import make_lift_env
+from rl.env import make_lift_env, resolve_controller_config
 from common.utils import (
     CONFIG_SNAPSHOT,
+    CONTROLLER_CONFIG_SNAPSHOT,
     EXIT_REQUEUE,
     FINAL_MODEL_NAME,
     REPLAY_BUFFER_NAME,
@@ -124,6 +126,11 @@ def train(cfg: TrainConfig) -> tuple[Path, bool]:
     run_name = cfg.run_name or "SAC_local"
     run_dir = make_run_dir(cfg.log_dir, run_name)
     save_config(cfg, run_dir / CONFIG_SNAPSHOT)  # no-op if resuming
+    controller_snapshot = run_dir / CONTROLLER_CONFIG_SNAPSHOT
+    if not controller_snapshot.exists():  # no-op if resuming, matches save_config above
+        controller_snapshot.write_text(
+            json.dumps(resolve_controller_config(cfg.env.controller, cfg.env.robot), indent=2)
+        )
     LOGGER.info("Run directory: %s | device: %s", run_dir, device)
 
     _validate_env_once(cfg)

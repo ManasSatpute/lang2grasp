@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""End-to-end smoke test. Runs in ~2 minutes and proves four things.
+"""End-to-end smoke test. Runs in ~2 minutes and proves five things.
 
   [1] The env passes Gymnasium's API checker.
   [2] The training loop runs to completion: no crashes, TensorBoard events
@@ -7,6 +7,8 @@
   [3] The final model reloads in a fresh object and produces bit-identical
       deterministic actions -> the save/load round-trip is lossless.
   [4] The reloaded policy completes full episodes in a rebuilt env.
+  [5] The controller actually resolved (and persisted to run metadata) matches
+      what the config asked for -- not a hardcoded fallback that happens to agree.
 
 Not a performance test. 3k steps will not lift the cube; it tells you the plumbing
 is sound before you spend a night on 1M steps.
@@ -18,6 +20,7 @@ Usage (from the repo root):
 from __future__ import annotations
 
 import argparse
+import json
 import logging
 import os
 import shutil
@@ -33,7 +36,7 @@ from rl.config import TrainConfig  # noqa: E402
 from rl.env import EnvConfig  # noqa: E402
 from rl.rollout import load_policy, rollout  # noqa: E402
 from rl.train import train  # noqa: E402
-from common.utils import FINAL_MODEL_NAME, setup_logging  # noqa: E402
+from common.utils import CONTROLLER_CONFIG_SNAPSHOT, FINAL_MODEL_NAME, setup_logging  # noqa: E402
 
 LOGGER = logging.getLogger("smoke_test")
 
@@ -77,6 +80,24 @@ def assert_artifacts(run_dir: Path, expect_vecnorm: bool) -> None:
     LOGGER.info("[2] OK: %d checkpoint(s), %d TB event file(s).", len(ckpts), len(tb_events))
 
 
+def assert_controller_resolved(run_dir: Path, expected_controller: str) -> None:
+    """[5] The controller robosuite actually ran with is on disk and matches the config.
+
+    Guards against a regression back to a hardcoded controller (e.g. always "BASIC")
+    that happens to match this test's default and would otherwise pass silently --
+    see rl.env.resolve_controller_config.
+    """
+    snapshot = run_dir / CONTROLLER_CONFIG_SNAPSHOT
+    assert snapshot.exists(), f"missing {snapshot}"
+    resolved = json.loads(snapshot.read_text())
+    body_parts = resolved.get("body_parts")
+    actual = body_parts["right"]["type"] if body_parts else resolved.get("type")
+    assert actual == expected_controller, (
+        f"cfg.env.controller={expected_controller!r} but resolved config used {actual!r}"
+    )
+    LOGGER.info("[5] OK: resolved controller matches config (%s).", actual)
+
+
 def assert_round_trip(run_dir: Path) -> None:
     """[3] Two independent loads of the same archive agree exactly on actions.
 
@@ -114,6 +135,7 @@ def main() -> int:
         run_dir, _ = train(cfg)
 
         assert_artifacts(run_dir, expect_vecnorm=cfg.normalize_obs)
+        assert_controller_resolved(run_dir, cfg.env.controller)
         assert_round_trip(run_dir)
 
         metrics = rollout(run_dir, episodes=2, seed=99)

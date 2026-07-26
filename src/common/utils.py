@@ -18,6 +18,11 @@ FINAL_MODEL_NAME = "final_model.zip"
 VECNORM_NAME = "vecnormalize.pkl"
 REPLAY_BUFFER_NAME = "replay_buffer.pkl"
 CONFIG_SNAPSHOT = "config.json"
+#: The composite controller config robosuite actually ran with -- resolved at env
+#: construction, not just the ``controller`` name string from the input JSON. Without
+#: this, telling which controller a published run used means reading library
+#: internals; see rl.env.resolve_controller_config.
+CONTROLLER_CONFIG_SNAPSHOT = "controller_config.json"
 
 #: Exit code meaning "I checkpointed cleanly and there is work left; please requeue."
 #: src/slurm/train.slurm keys off this. Anything else is a genuine success/failure.

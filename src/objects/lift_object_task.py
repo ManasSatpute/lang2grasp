@@ -8,7 +8,7 @@ constructor hook to swap it -- confirmed against the installed robosuite 1.5.1 s
 needs overriding is ``_load_model`` -- and that means **vendoring its body**, since
 there's no smaller extension point. This is pinned to the ``robosuite<1.6`` requirement
 in ``requirements.txt``; re-diff this method against ``Lift._load_model`` before
-raising that pin (same spirit as ``env.py``'s ``_load_controller_config`` handling the
+raising that pin (same spirit as ``env.py``'s ``resolve_controller_config`` handling the
 1.4/1.5 controller-config API split).
 
 robosuite auto-registers any subclass of its env base class by class name (see
