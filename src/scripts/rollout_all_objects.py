@@ -33,7 +33,7 @@ import csv
 from pathlib import Path
 
 from rl.rollout import load_run_object_params, rollout
-from common.utils import CONFIG_SNAPSHOT, setup_logging
+from common.utils import CONFIG_SNAPSHOT, FINAL_MODEL_NAME, setup_logging
 
 #: Full per-object metric set written to the CSV -- a superset of what the
 #: console table prints (see main()).
@@ -91,6 +91,10 @@ def main() -> None:
 
     rows = []
     for run_dir in run_dirs:
+        if not (run_dir / FINAL_MODEL_NAME).exists():
+            print(f"Skipping {run_dir.name}: no {FINAL_MODEL_NAME} (training incomplete).")
+            continue
+
         object_name = run_dir.name.removeprefix("lift_")
         object_params = load_run_object_params(run_dir)
         metrics = rollout(run_dir, episodes=args.episodes, seed=args.seed, device=args.device)
