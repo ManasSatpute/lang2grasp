@@ -59,6 +59,7 @@ export MUJOCO_GL=glfw
 VNC_PASS=$(head -c 12 /dev/urandom | base64 | tr -dc 'a-zA-Z0-9' | head -c 10)
 
 start_turbovnc() {
+<<<<<<< HEAD
   # Some systems (e.g. CSF3) ship `vncserver` as a plain OS package already on
   # PATH -- check that first so a run there doesn't print two "no modulefile"
   # errors every time. Only try loading a module if it's genuinely not on PATH
@@ -67,6 +68,12 @@ start_turbovnc() {
   if ! command -v vncserver >/dev/null 2>&1; then
     module load turbovnc 2>/dev/null || module load tigervnc 2>/dev/null || true
   fi
+=======
+  # A module isn't required -- some systems (e.g. CSF3) ship `vncserver` as a
+  # plain OS package with no module to load, so a failed `module load` here
+  # isn't fatal on its own; only bail if `vncserver` is nowhere on PATH either.
+  module load turbovnc 2>/dev/null || module load tigervnc 2>/dev/null || true
+>>>>>>> 5a1d700bc512866543e563164faa5b842549b64d
   command -v vncserver >/dev/null 2>&1 || return 1
   vncserver "$DISPLAY" -geometry 1024x768 -depth 24 -localhost -SecurityTypes VncAuth \
       < <(printf '%s\n%s\nn\n' "$VNC_PASS" "$VNC_PASS")
