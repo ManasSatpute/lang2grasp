@@ -9,17 +9,20 @@ Two groups of fields:
   torsional, rolling).
 - **Grasp-descriptive fields** (``mass_class``, ``fragile``, ``grip_force_min_N``,
   ``grip_force_max_N``, ``spring_Npm``, ``crush_force_N``) are metadata carried
-  through the pipeline (extraction -> training config -> rollout output), and drive
-  `rl/env.py`'s optional grip-force-aware reward shaping (``EnvConfig.grip_force_shaping``,
-  off by default): per-finger contact force is *estimated* from gripper aperture via
-  ``reaction_force_N`` (a spring-compression model using ``spring_Npm``), then
-  compared against ``grip_force_min_N``/``grip_force_max_N`` (reward) and
-  ``crush_force_N`` (penalty). Unlike ``grip_force_max_N`` (a friendlier
-  training-time target range), ``crush_force_N`` is the harder physical damage
-  threshold; the two can and do differ in scale for the same object. ``mass_class``
-  and ``fragile`` remain purely descriptive -- they don't change the physics
-  (``fragile`` objects already get a low ``crush_force_N`` instead) or the reward
-  directly.
+  through the pipeline (extraction -> training config -> rollout output).
+  ``grip_force_min_N``/``grip_force_max_N``/``crush_force_N`` drive `rl/env.py`'s
+  reward shaping, keyed off a **genuine MuJoCo fingertip force sensor**
+  (``objects/force_gripper.py``), not an estimate: crush penalty/termination
+  (``crush_force_N``) are unconditional whenever ``EnvConfig.object`` is set, and the
+  optional safe-hold bonus (``EnvConfig.grip_force_shaping``, off by default) compares
+  the same real reading against ``grip_force_min_N``/``max_N``. Unlike
+  ``grip_force_max_N`` (a friendlier training-time target range), ``crush_force_N`` is
+  the harder physical damage threshold; the two can and do differ in scale for the
+  same object. ``mass_class`` and ``fragile`` remain purely descriptive -- they don't
+  change the physics (``fragile`` objects already get a low ``crush_force_N`` instead)
+  or the reward directly. ``reaction_force_N``/``spring_Npm`` below predate the real
+  sensor and are no longer read by `rl/env.py`; kept as a stiffness descriptor still
+  carried through extraction, not currently consumed by training.
 
 Values are clamped to ranges that stay graspable by a Panda parallel-jaw gripper and
 numerically stable in MuJoCo. An LLM extrapolating from a text prompt occasionally
@@ -193,9 +196,9 @@ class ObjectParams:
     def reaction_force_N(self, aperture_mm: float) -> float:
         """Spring-compression contact force (N) at a given gripper aperture.
 
-        reaction = spring_Npm * max(0, rest_width_mm - aperture_mm) / 1000.
-        Used by `rl/env.py`'s grip-force reward shaping to estimate per-finger
-        contact force from the Panda gripper's aperture. See module docstring.
+        reaction = spring_Npm * max(0, rest_width_mm - aperture_mm) / 1000. Not
+        currently read by `rl/env.py`, which uses a genuine MuJoCo fingertip force
+        sensor instead (`objects/force_gripper.py`) -- see module docstring.
         """
         compression_mm = max(0.0, self.rest_width_mm - aperture_mm)
         return self.spring_Npm * compression_mm / 1000.0

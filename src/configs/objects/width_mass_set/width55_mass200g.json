@@ -1,0 +1,26 @@
+{
+  "name": "width55_mass200g",
+  "shape": "cylinder",
+  "size": [
+    0.0275,
+    0.045
+  ],
+  "density": 935.3458547182097,
+  "friction": [
+    0.5,
+    0.005,
+    0.0001
+  ],
+  "rgba": [
+    0.6,
+    0.75,
+    0.85,
+    1.0
+  ],
+  "mass_class": "medium",
+  "fragile": true,
+  "grip_force_min_N": 2.0,
+  "grip_force_max_N": 10.0,
+  "spring_Npm": 3000.0,
+  "crush_force_N": 10.0
+}

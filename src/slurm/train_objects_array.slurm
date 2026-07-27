@@ -1,15 +1,21 @@
 #!/bin/bash
-# Stage 2, cluster form: one SLURM array task per LLM-parameterised object,
-# running in parallel instead of scripts/train_all_objects.py's local sequential
-# loop. Same requeue mechanism as train.slurm -- see that file's header comment.
+# Stage 2, cluster form: one SLURM array task per object snapshot found in
+# OBJECTS_DIR, running in parallel instead of scripts/train_all_objects.py's local
+# sequential loop. Same requeue mechanism as train.slurm -- see that file's header
+# comment.
 #
-# --array=0-5 assumes exactly 6 object snapshots in src/configs/objects/ (the
-# repo's default set). If you add/remove objects, update the --array range to
-# match (count them: `ls src/configs/objects/*.json | grep -v prompts.json | wc -l`).
+# --array=0-5 (default) assumes exactly 6 object snapshots in the default
+# OBJECTS_DIR, src/configs/objects/ (the repo's default 6-object set). Any other
+# OBJECTS_DIR -- e.g. the 5-object width_mass_set -- needs --array overridden to
+# match on the sbatch command line (a CLI --array beats the #SBATCH one below);
+# count the target directory first: `ls <dir>/*.json | grep -v prompts.json | wc -l`.
 #
 # Usage (from the repo root):
 #   sbatch src/slurm/train_objects_array.slurm
 #   sbatch --export=ALL,CONFIG=src/configs/policy/sac.json src/slurm/train_objects_array.slurm
+#   # The width/mass-matched set (5 objects, src/scripts/generate_width_mass_objects.py):
+#   sbatch --array=0-4 --export=ALL,OBJECTS_DIR=src/configs/objects/width_mass_set \
+#       src/slurm/train_objects_array.slurm
 
 #SBATCH --job-name=lift_train_array
 #SBATCH --partition=gpuL              # <-- EDIT if your allocation's GPU partition differs
@@ -25,7 +31,7 @@
 # No `-e`: we need $? from `wait` below, which `-e` would abort past.
 source "${SLURM_SUBMIT_DIR}/src/slurm/env.sh"
 
-OBJECTS_DIR="src/configs/objects"
+OBJECTS_DIR="${OBJECTS_DIR:-src/configs/objects}"
 mapfile -t OBJECT_FILES < <(find "$OBJECTS_DIR" -maxdepth 1 -name '*.json' ! -name 'prompts.json' | sort)
 
 OBJECT="${OBJECT_FILES[$SLURM_ARRAY_TASK_ID]:-}"

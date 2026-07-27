@@ -13,19 +13,24 @@ Two details matter for correctness and are handled explicitly:
 2. ``info["is_success"]``. SB3's ``EvalCallback`` aggregates this key into
    ``eval/success_rate``. Without it you only ever see return, never task success.
 
-Optional grip-force-aware reward shaping (``EnvConfig.grip_force_shaping``) uses
-``ObjectParams.grip_force_min_N``/``grip_force_max_N``/``crush_force_N``/``spring_Npm``,
-so an LLM-described object's force window actually influences this training loop too,
-not just the object's geometry/density/friction. Per-finger contact force is
-*estimated* from the Panda gripper's finger joint positions
-(``obs_dict["robot0_gripper_qpos"]``, always present for any gripper-equipped robot --
-see ``robosuite.robots.robot.Robot._create_arm_sensors``) via
-``ObjectParams.reaction_force_N``'s spring-compression model. It is an estimate, not a
-true contact-force sensor reading, and assumes a two-finger parallel gripper whose
-joint qpos sum to aperture the way Panda's does (confirmed against robosuite 1.5's
-``panda_gripper.xml``: finger joints range [0, 0.04] and [-0.04, 0] metres, so
-aperture = qpos[0] - qpos[1] spans the Panda's ~80mm opening). A different gripper
-model would need this remapped.
+Fingertip force is a genuine MuJoCo sensor reading, not an estimate: every env uses
+``PandaGripperForce`` (``objects/force_gripper.py``), a Panda gripper variant with a
+3-axis ``<force>`` sensor on each fingertip pad, and ``"fingertip_force"`` -- a 6-dim
+``[left_fx,fy,fz, right_fx,fy,fz]`` vector -- is always part of the observation
+(``DEFAULT_OBS_KEYS``), for every config, baseline included. That matters: a real
+robot has this sensor regardless of whether it's holding an LLM-described object, so
+a force-conditioned policy's edge over the generic baseline can't just be "I have a
+sensor you don't."
+
+Crush behaviour is object-specific (keyed off ``ObjectParams.crush_force_N``, which
+only exists once ``EnvConfig.object`` is set): whenever ``object`` is set, every step
+computes ``contact_force_N = max(|left force|, |right force|)`` from the real sensor,
+and if it exceeds ``object.crush_force_N`` the episode pays a reward penalty
+proportional to the excess (``EnvConfig.crush_penalty_coeff``) and, by default,
+terminates (``EnvConfig.terminate_on_crush``) -- this is unconditional (not gated by
+``grip_force_shaping``), since fragility shouldn't be an opt-in experiment. Separately,
+``EnvConfig.grip_force_shaping`` still exists, but now controls *only* the optional
+"safe-hold" bonus for staying within ``object.grip_force_min_N``/``max_N``.
 """
 
 from __future__ import annotations
@@ -41,13 +46,17 @@ import robosuite as suite
 from gymnasium import spaces
 
 from objects import lift_object_task  # noqa: F401  -- registers "ParamLift" with robosuite
+from objects.force_gripper import PAD_FORCE_SENSOR_NAMES  # noqa: F401 -- registers "PandaGripperForce"
 from objects.object_params import ObjectParams
 
 LOGGER = logging.getLogger(__name__)
 
-#: robosuite's low-dim state keys. `robot0_proprio-state` = joint pos/vel, gripper,
-#: eef pose. `object-state` = cube pose + relative-to-eef vector.
-DEFAULT_OBS_KEYS: tuple[str, ...] = ("robot0_proprio-state", "object-state")
+#: robosuite's low-dim state keys, plus the genuine per-fingertip force sensor (see
+#: module docstring and objects/force_gripper.py). `robot0_proprio-state` = joint
+#: pos/vel, gripper, eef pose. `object-state` = cube pose + relative-to-eef vector.
+#: `fingertip_force` = [left_fx,fy,fz, right_fx,fy,fz] (N), injected by this env's
+#: reset()/step() -- not a robosuite-native obs_dict key.
+DEFAULT_OBS_KEYS: tuple[str, ...] = ("robot0_proprio-state", "object-state", "fingertip_force")
 
 
 @dataclass
@@ -76,17 +85,25 @@ class EnvConfig:
     #: robosuite Lift cube exactly (env_name="Lift", no ParamLift involved at all).
     object: ObjectParams | None = None
 
-    #: Add a grip-force-aware term to the reward each step, using `object`'s
-    #: grip_force_min_N/max_N/crush_force_N (see module docstring). Requires `object`
-    #: to be set. Off by default -- existing configs are byte-for-byte unaffected.
+    #: Add a reward bonus each step the real fingertip force falls inside
+    #: [object.grip_force_min_N, object.grip_force_max_N] -- a secure, non-crushing
+    #: hold. Requires `object` to be set. Off by default -- existing configs are
+    #: byte-for-byte unaffected. Does NOT gate crush behaviour any more (see
+    #: crush_penalty_coeff/terminate_on_crush below and the module docstring) --
+    #: fragility isn't optional the way this bonus is.
     grip_force_shaping: bool = False
-    #: Reward added each step the estimated per-finger contact force falls inside
-    #: [object.grip_force_min_N, object.grip_force_max_N] -- a secure, non-crushing hold.
+    #: Reward added each step the real per-finger contact force falls inside the
+    #: window above. Only applied when grip_force_shaping is True.
     grip_force_bonus: float = 0.1
-    #: Reward subtracted each step the estimated per-finger contact force exceeds
-    #: object.crush_force_N. Deliberately larger than grip_force_bonus: crushing a
-    #: fragile object should outweigh several steps of a good hold.
-    crush_penalty: float = 1.0
+    #: Per-Newton reward penalty (lambda), applied whenever `object` is set and the
+    #: real fingertip force exceeds object.crush_force_N: reward -=
+    #: crush_penalty_coeff * (contact_force_N - object.crush_force_N). Unconditional
+    #: on `object` being set -- not gated by grip_force_shaping.
+    crush_penalty_coeff: float = 0.1
+    #: End the episode the step fingertip force first exceeds object.crush_force_N.
+    #: Unconditional on `object` being set, same as crush_penalty_coeff -- a crushed
+    #: object is a real terminal state, not an optional shaping choice.
+    terminate_on_crush: bool = True
 
     def __post_init__(self) -> None:
         # JSON round-trips a tuple back as a list. Normalise on construction so a
@@ -163,6 +180,21 @@ class RobosuiteLiftEnv(gym.Env):
             env_name = "ParamLift"
             object_kwargs["object_params"] = self.cfg.object
 
+        # The genuine fingertip force sensor (module docstring) is Panda-specific --
+        # PandaGripperForce's derived XML is built from panda_gripper.xml. Every
+        # config this project ships uses robot="Panda" (see README.md); fall back to
+        # that robot's own default gripper for anything else rather than erroring, so
+        # an exploratory non-Panda run degrades to "no fingertip_force sensor" instead
+        # of crashing.
+        if self.cfg.robot == "Panda":
+            object_kwargs["gripper_types"] = "PandaGripperForce"
+        else:
+            LOGGER.warning(
+                "robot=%r has no fingertip force sensor (PandaGripperForce is "
+                "Panda-only); 'fingertip_force' in the observation will be all-zero.",
+                self.cfg.robot,
+            )
+
         self.resolved_controller_config = resolve_controller_config(self.cfg.controller, self.cfg.robot)
         LOGGER.info(
             "Resolved controller %r for %s -> %s",
@@ -192,12 +224,12 @@ class RobosuiteLiftEnv(gym.Env):
             low=low.astype(np.float32), high=high.astype(np.float32), dtype=np.float32
         )
 
-        obs_dim = self._flatten(self._env.reset()).shape[0]
+        self._fingertip_force_warned = False  # log the degradation warning once, not every step
+        obs_dim = self._flatten(self._augment_obs_dict(self._env.reset())).shape[0]
         self.observation_space = spaces.Box(
             low=-np.inf, high=np.inf, shape=(obs_dim,), dtype=np.float32
         )
         self._elapsed_steps = 0
-        self._grip_force_warned = False  # log the graceful-degradation warning once, not every step
         self.last_obs_dict: dict[str, np.ndarray] = {}  # raw robosuite obs, e.g. for rl.sparse_seed
         LOGGER.info(
             "Built %s/%s | obs_dim=%d act_dim=%d horizon=%d shaped=%s",
@@ -224,32 +256,41 @@ class RobosuiteLiftEnv(gym.Env):
         check = getattr(self._env, "_check_success", None)
         return bool(check()) if callable(check) else False
 
-    def _estimate_grip_force_N(self, obs_dict: dict[str, np.ndarray]) -> float | None:
-        """Estimate per-finger contact force (N) from gripper aperture.
+    def _read_fingertip_forces_N(self) -> np.ndarray:
+        """Real per-pad 3-axis contact force (N) from PandaGripperForce's MuJoCo sensors.
 
-        Returns None (and warns once) if the expected observable isn't there -- e.g. a
-        gripper with a different joint convention than the two-finger Panda this was
-        written against. See module docstring for the aperture formula's derivation.
+        Returns a (6,) float32 vector ``[left_fx,fy,fz, right_fx,fy,fz]``. All-zero
+        (with a one-time warning) if the active gripper doesn't have these sensors --
+        e.g. cfg.robot != "Panda", see __init__. See module docstring and
+        objects/force_gripper.py for how the sensors are added.
         """
-        qpos = obs_dict.get("robot0_gripper_qpos")
-        if qpos is None or np.asarray(qpos).shape != (2,):
-            if not self._grip_force_warned:
+        robot = self._env.robots[0]
+        arm = robot.arms[0]
+        gripper = robot.gripper[arm]
+        sensors = gripper.important_sensors
+        if not all(name in sensors for name in PAD_FORCE_SENSOR_NAMES):
+            if not self._fingertip_force_warned:
                 LOGGER.warning(
-                    "grip_force_shaping: expected obs_dict['robot0_gripper_qpos'] with "
-                    "shape (2,), got %s. Disabling force-based reward shaping for this env.",
-                    None if qpos is None else np.asarray(qpos).shape,
+                    "Active gripper %s has no %s sensors; 'fingertip_force' will be "
+                    "all-zero for this env.",
+                    type(gripper).__name__,
+                    PAD_FORCE_SENSOR_NAMES,
                 )
-                self._grip_force_warned = True
-            return None
+                self._fingertip_force_warned = True
+            return np.zeros(6, dtype=np.float32)
 
-        aperture_mm = (float(qpos[0]) - float(qpos[1])) * 1000.0
-        return self.cfg.object.reaction_force_N(aperture_mm)
+        forces = [robot.get_sensor_measurement(sensors[name]) for name in PAD_FORCE_SENSOR_NAMES]
+        return np.concatenate(forces).astype(np.float32)
 
-    def _grip_force_reward_term(self, force_N: float) -> float:
-        """Bonus for holding within the object's safe window, penalty for exceeding it."""
+    def _augment_obs_dict(self, obs_dict: dict[str, np.ndarray]) -> dict[str, np.ndarray]:
+        """A copy of robosuite's obs_dict with the real fingertip-force reading added."""
+        obs_dict = dict(obs_dict)
+        obs_dict["fingertip_force"] = self._read_fingertip_forces_N()
+        return obs_dict
+
+    def _grip_force_bonus_term(self, force_N: float) -> float:
+        """Bonus for holding within the object's safe window. Crush is handled in step()."""
         obj = self.cfg.object
-        if force_N > obj.crush_force_N:
-            return -self.cfg.crush_penalty
         if obj.grip_force_min_N <= force_N <= obj.grip_force_max_N:
             return self.cfg.grip_force_bonus
         return 0.0
@@ -269,7 +310,7 @@ class RobosuiteLiftEnv(gym.Env):
             # robosuite limitation, not a Gymnasium one.
             np.random.seed(seed)
         self._elapsed_steps = 0
-        obs_dict = self._env.reset()
+        obs_dict = self._augment_obs_dict(self._env.reset())
         self.last_obs_dict = obs_dict
         return self._flatten(obs_dict), {"is_success": False}
 
@@ -278,19 +319,31 @@ class RobosuiteLiftEnv(gym.Env):
             np.asarray(action, dtype=np.float64), self.action_space.low, self.action_space.high
         )
         obs_dict, reward, _robosuite_done, info = self._env.step(action)
+        obs_dict = self._augment_obs_dict(obs_dict)
         self.last_obs_dict = obs_dict
         self._elapsed_steps += 1
         reward = float(reward)
 
         info = dict(info)
-        if self.cfg.grip_force_shaping:
-            force_N = self._estimate_grip_force_N(obs_dict)
-            if force_N is not None:
-                reward += self._grip_force_reward_term(force_N)
-                info["grip_force_N"] = force_N
+        crushed = False
+        if self.cfg.object is not None:
+            fingertip_force = obs_dict["fingertip_force"]
+            contact_force_N = float(
+                max(np.linalg.norm(fingertip_force[:3]), np.linalg.norm(fingertip_force[3:]))
+            )
+            info["fingertip_force_N"] = contact_force_N
 
+            crush_excess_N = max(0.0, contact_force_N - self.cfg.object.crush_force_N)
+            if crush_excess_N > 0.0:
+                reward -= self.cfg.crush_penalty_coeff * crush_excess_N
+                crushed = self.cfg.terminate_on_crush
+
+            if self.cfg.grip_force_shaping:
+                reward += self._grip_force_bonus_term(contact_force_N)
+
+        info["crushed"] = crushed
         success = self._is_success()
-        terminated = bool(success and self.cfg.terminate_on_success)
+        terminated = bool(crushed or (success and self.cfg.terminate_on_success))
         truncated = bool(self._elapsed_steps >= self.cfg.horizon) and not terminated
 
         info["is_success"] = success

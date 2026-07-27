@@ -5,7 +5,10 @@ arm, through a native **Gymnasium** interface, plus an LLM-driven pipeline that 
 text description of an object into the physical parameters (`ObjectParams`) that
 parameterise the sim. Built for a SLURM cluster with 1 GPU and 12 CPU cores per job.
 
-No custom rewards, no custom policies — a baseline you can trust before changing things.
+No custom policies — a baseline you can trust before changing things. Reward shaping
+is limited to a genuine fingertip-force-sensor-driven crush penalty/termination for
+LLM-described objects (see "How it fits together" below); the stock cube baseline is
+otherwise untouched robosuite `Lift`.
 
 ## Contents
 
@@ -33,10 +36,12 @@ lang2grasp/
 │   │   │   └── sac.json         # 4 env workers, gradient_steps=4 (1:1 replay ratio)
 │   │   └── objects/
 │   │       ├── prompts.json     # 6 named text prompts, one per object
-│   │       └── <name>.json      # ObjectParams snapshots written by extract_object_params.py
+│   │       ├── <name>.json      # ObjectParams snapshots written by extract_object_params.py
+│   │       └── width_mass_set/  # 5 objects isolating width vs. mass, see generate_width_mass_objects.py
 │   ├── objects/
 │   │   ├── object_params.py     # ObjectParams: shape/size/mass/friction, validated + clamped
-│   │   └── lift_object_task.py  # ParamLift: Lift with the cube replaced by an ObjectParams object
+│   │   ├── lift_object_task.py  # ParamLift: Lift with the cube replaced by an ObjectParams object
+│   │   └── force_gripper.py     # PandaGripperForce: adds a real per-fingertip MuJoCo force sensor
 │   ├── extraction/
 │   │   ├── llm_backends.py      # Mock / Anthropic / OpenAI / Groq extraction backends
 │   │   ├── param_prompts.py     # extraction prompt, JSON schema, offline priors
@@ -51,13 +56,15 @@ lang2grasp/
 │   ├── scripts/
 │   │   ├── check_gpu.py             # GPU hello-world
 │   │   ├── extract_object_params.py # stage 1: prompt -> LLM -> ObjectParams JSON
+│   │   ├── generate_width_mass_objects.py # stage 1 (analytic): the width/mass-matched 5-object set
 │   │   ├── train_object.py          # stage 2: train one object's SAC policy
-│   │   ├── train_all_objects.py     # stage 2: local sequential driver, all 6 objects
-│   │   ├── rollout_all_objects.py   # stage 3: roll out + results/plot/video, all 6 objects
+│   │   ├── train_all_objects.py     # stage 2: local sequential driver, all objects in a dir
+│   │   ├── rollout_all_objects.py   # stage 3: roll out + results/plot/video, all objects
 │   │   ├── plot_rollout_results.py  # stage 3: success-rate/return plots (per-object + comparison)
 │   │   └── compare_policies.py      # stage 3: generic baseline vs. per-object policies
 │   ├── tests/
-│   │   └── smoke_test.py        # end-to-end: check_env + train + save/load round-trip + rollout
+│   │   ├── smoke_test.py        # end-to-end: check_env + train + save/load round-trip + rollout
+│   │   └── force_sensor_test.py # fingertip force sensor + crush penalty/termination + object-set check
 │   ├── slurm/                   # CSF3 job scripts -- see "Running on a Slurm cluster" below
 │   └── results/                 # rollout_all_objects.py / compare_policies.py output
 ```
@@ -145,10 +152,11 @@ PYTHONPATH=src python src/scripts/compare_policies.py \
 
 Writes `src/results/policy_comparison.csv` (always) and, with `--plot`,
 `policy_comparison.png` -- a grouped success-rate/return chart, generic vs.
-object-aware, per object. Per-object training can also optionally turn on
-grip-force-aware reward shaping for a 3-way comparison:
-`train_object.py --grip-force-shaping` (off by default, same as `EnvConfig`'s own
-default -- see "How it fits together" below).
+object-aware, per object. Per-object training can also optionally turn on the
+grip-force safe-hold bonus for a 3-way comparison: `train_object.py
+--grip-force-shaping` (off by default, same as `EnvConfig`'s own default -- see "How
+it fits together" below). This is a bonus term only -- crush penalty/termination are
+unconditional whenever `--object` is set and aren't affected by this flag.
 
 **The 6 default objects** (`src/configs/objects/prompts.json`) span the axes that matter
 for grasping, not just geometry — fragile vs. rugged, light vs. heavy, slick vs.
@@ -163,14 +171,24 @@ grippy:
 | `raw_egg` | ball | yes | 1–4 | narrow safe force window |
 | `brick` | box | no | 15–80 | heavy |
 
+These 6 confound geometry and mass — `rest_width_mm` predicts rollout success much
+more strongly than `mass_g` does across this set, and nothing here holds one axis
+fixed while varying the other. See "Width-matched / mass-matched object set" below
+for a set that does.
+
 **How it fits together.** `ObjectParams` (`src/objects/object_params.py`) holds
 simulation fields (`shape`, `size`, `density`, `friction`) that map directly onto
 robosuite's primitive objects; descriptive fields (`mass_class`, `fragile`) carried
 through the pipeline as metadata; and force fields (`grip_force_min_N`/`max_N`,
-`spring_Npm`, `crush_force_N`) that drive this training pipeline's **optional**
-grip-force-aware reward shaping (`EnvConfig.grip_force_shaping`, off by default —
-see `rl/env.py`'s module docstring for how contact force is estimated from gripper
-aperture). `ParamLift`
+`crush_force_N`) that drive this training pipeline's reward, keyed off a **genuine
+MuJoCo fingertip force sensor** (`objects/force_gripper.py`'s `PandaGripperForce`, a
+3-axis `<force>` sensor on each finger pad) — not an estimate, and its 6-dim reading
+(`fingertip_force`) is part of the observation for *every* config, including the
+generic baseline with no `ObjectParams` at all. Crush penalty/termination
+(`EnvConfig.crush_penalty_coeff`/`terminate_on_crush`) are unconditional whenever
+`env.object` is set; `EnvConfig.grip_force_shaping` (off by default) only adds an
+extra bonus for staying within `grip_force_min_N`/`max_N` — see `rl/env.py`'s module
+docstring for the full mechanism. `ParamLift`
 (`src/objects/lift_object_task.py`) is a `robosuite.Lift` subclass whose `_load_model`
 builds the object from `shape`/`size`/`density`/`friction` instead of the stock red
 cube — every other `Lift` method (`reward`, `_check_success`, ...) references
@@ -182,6 +200,39 @@ it switches `RobosuiteLiftEnv` from `suite.make("Lift", ...)` to
 Extraction is deliberately decoupled from training: `extract_object_params.py` writes
 a plain JSON snapshot of `ObjectParams`, and everything downstream — including a
 SLURM node with no internet — reads that snapshot. No training run ever calls an LLM.
+
+### Width-matched / mass-matched object set
+
+The 6 objects above vary shape, mass *and* size together, so a result that looks like
+"heavier objects are harder to lift" can't be told apart from "wider objects are
+harder to grasp." `generate_width_mass_objects.py` generates 5 cylinders that hold one
+axis fixed at a time:
+
+| object | width | mass |
+|---|---|---|
+| `width40_mass050g` | 40mm | 50g |
+| `width40_mass200g` | 40mm | 200g *(shared anchor)* |
+| `width40_mass500g` | 40mm | 500g |
+| `width25_mass200g` | 25mm | 200g |
+| `width55_mass200g` | 55mm | 200g |
+
+`{width40_mass050g, width40_mass200g, width40_mass500g}` isolates mass (width
+constant); `{width25_mass200g, width40_mass200g, width55_mass200g}` isolates width
+(mass constant). Every other field (friction, fragile, grip force window,
+`crush_force_N`) is held constant across all 5, so width/mass are the only things
+that differ between objects in this set. Deterministic and analytic (radius/
+half-height/density solved in closed form from the target width/mass), not
+LLM-extracted — these are specified physical points, not free-text descriptions.
+
+```bash
+PYTHONPATH=src python src/scripts/generate_width_mass_objects.py
+#   -> src/configs/objects/width_mass_set/{width40_mass050g,width40_mass200g,...}.json
+
+# Same pipeline as the 6 narrative objects, just pointed at this directory:
+PYTHONPATH=src python src/scripts/train_all_objects.py \
+    --objects-dir src/configs/objects/width_mass_set --base-config src/configs/policy/sac.json
+PYTHONPATH=src python src/scripts/rollout_all_objects.py --runs-dir runs --episodes 20
+```
 
 ## Running on a Slurm cluster (CSF3)
 
@@ -213,12 +264,16 @@ what's cluster-specific lives in that one file.
 
 ```bash
 # Gates -- run once, in order, before trusting anything below.
-sbatch src/slurm/check_gpu.slurm     # gate 1: "hello world from cuda:0 ... sum = 27.0"
-sbatch src/slurm/smoke_test.slurm    # gate 2: "SMOKE TEST PASSED"
+sbatch src/slurm/check_gpu.slurm         # gate 1: "hello world from cuda:0 ... sum = 27.0"
+sbatch src/slurm/smoke_test.slurm        # gate 2: "SMOKE TEST PASSED"
+sbatch src/slurm/force_sensor_test.slurm # gate 3: "FORCE SENSOR TEST PASSED"
 
 # Stage 1: prompt -> LLM -> ObjectParams JSON. See extract_object_params.slurm's own
 # header for the network-access caveat with real (non-mock) backends.
 sbatch src/slurm/extract_object_params.slurm
+# Width/mass-matched set (analytic, no LLM/network involved -- cheap enough to just
+# run directly on the login node instead of via sbatch):
+PYTHONPATH=src python src/scripts/generate_width_mass_objects.py
 
 # Stage 2: train. Baseline (stock Lift cube):
 JOB=$(sbatch --parsable src/slurm/train.slurm)
@@ -227,6 +282,10 @@ tail -f logs/lift_train_${JOB}.out
 sbatch --export=ALL,OBJECT=src/configs/objects/raw_egg.json src/slurm/train.slurm
 # All 6 objects, one array task each:
 sbatch src/slurm/train_objects_array.slurm
+# The width/mass-matched set instead (5 objects -- note --array=0-4, one less than
+# the default):
+sbatch --array=0-4 --export=ALL,OBJECTS_DIR=src/configs/objects/width_mass_set \
+    src/slurm/train_objects_array.slurm
 
 # Stage 3: rollout.
 sbatch --export=ALL,RUN_DIR=/scratch/$USER/lang2grasp_runs/lift_${JOB}_s0 \
@@ -260,6 +319,7 @@ Without a SLURM cluster, run the same steps directly:
 ```bash
 PYTHONPATH=src python src/scripts/check_gpu.py
 PYTHONPATH=src python src/tests/smoke_test.py --steps 3000
+PYTHONPATH=src python src/tests/force_sensor_test.py
 
 PYTHONPATH=src python -m rl.train --config src/configs/policy/sac.json
 PYTHONPATH=src python -m rl.rollout --run-dir runs/SAC_local --episodes 10
@@ -272,9 +332,10 @@ src/slurm/
   env.sh                       # sourced by every script below: conda env, PYTHONPATH, threads
   check_gpu.slurm              # gate 1: GPU/CUDA/torch sanity
   smoke_test.slurm             # gate 2: check_env + 3k-step train + save/load round-trip + rollout
+  force_sensor_test.slurm      # gate 3: fingertip force sensor + crush + width_mass_set (CPU-only)
   extract_object_params.slurm  # stage 1: prompt -> LLM -> configs/objects/<name>.json
   train.slurm                  # stage 2: one run -- baseline cube, or OBJECT=<snapshot.json>
-  train_objects_array.slurm    # stage 2: all 6 objects as parallel array tasks
+  train_objects_array.slurm    # stage 2: all objects in OBJECTS_DIR as parallel array tasks
   rollout.slurm                # stage 3: roll out one run dir
   rollout_all_objects.slurm    # stage 3: roll out every lift_<object> run, results/plot/video
   rollout_vnc.slurm            # stage 3: live MuJoCo viewer over VNC, see below
@@ -352,6 +413,16 @@ thrash a 12-core cgroup and run **slower than a single environment**.
 
 ## Things that will silently ruin a run
 
+**Every checkpoint trained before the fingertip force sensor is now incompatible.**
+`fingertip_force` (6 dims) was added to `DEFAULT_OBS_KEYS` for every config, baseline
+included, so `obs_dim` grew for every run -- an old `final_model.zip`'s policy network
+has the wrong input shape for the current env and won't load/reload against it.
+Retrain the baseline and every object. Old `config.json` snapshots referencing the
+former `EnvConfig.crush_penalty` field also won't reload as-is (renamed to
+`crush_penalty_coeff` with different units -- flat penalty vs. per-Newton
+coefficient); this only matters if you're hand-editing an old snapshot rather than
+generating a fresh one.
+
 **`terminated` vs `truncated`.** robosuite raises `done` at the horizon. That is truncation.
 Report it as termination and SB3 bootstraps a zero value at every cut-off, biasing the value
 function on every episode. `rl/env.py` computes both flags itself. There's a regression test.
@@ -382,6 +453,28 @@ chance and looks like a training failure.
 
 **`SubprocVecEnv` + `fork`.** MuJoCo GL contexts do not survive `fork()`. `vec_env.py` forces
 `start_method="spawn"`.
+
+**The derived force-sensor gripper XML is version-qualified, not path-qualified.**
+`objects/force_gripper.py` builds `PandaGripperForce`'s XML once per installed
+robosuite version and caches it at
+`src/objects/_generated/panda_gripper_force_<version>.xml`; every process (every
+`SubprocVecEnv` worker, every `train_objects_array.slurm` array task, possibly on
+different compute nodes sharing the same NFS/GPFS-mounted repo checkout) checks for
+that exact file before rebuilding it, so in the steady state only the first caller on
+the whole cluster actually writes it. If you ever run two different robosuite
+versions against the same checkout (e.g. mid-upgrade), each gets its own cache file
+instead of one silently clobbering the other. This directory is gitignored and safe
+to delete — it's rebuilt on demand.
+
+**`force_sensor_test.slurm` (gate 3) matters more on a cluster than it looks.** It was
+developed and verified against robosuite 1.5.2; `requirements.txt` allows
+`>=1.4.1,<1.6`. `objects/force_gripper.py` assumes specific body names
+(`finger_joint1_tip`/`finger_joint2_tip`) inside the installed `panda_gripper.xml` —
+if CSF's conda env resolves to a version whose gripper XML differs, this gate fails
+loudly with a clear `RuntimeError` naming the missing body, rather than a real
+training job silently getting a broken (or all-zero) `fingertip_force`. Run
+`pip show robosuite` in the activated env to see what actually resolved, and run this
+gate before trusting anything downstream of it.
 
 ## Expectations
 

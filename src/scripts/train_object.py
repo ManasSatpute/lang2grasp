@@ -38,7 +38,10 @@ def parse_args() -> argparse.Namespace:
         "--grip-force-shaping",
         action="store_true",
         help="Enable EnvConfig.grip_force_shaping (off by default) -- adds a reward "
-        "term using this object's extracted grip_force_min_N/max_N/crush_force_N.",
+        "bonus for holding within this object's grip_force_min_N/max_N window, using "
+        "the real fingertip force sensor. Crush penalty/termination (crush_force_N) "
+        "are unconditional whenever --object is set and are NOT controlled by this "
+        "flag -- see rl/env.py's module docstring.",
     )
     return parser.parse_args()
 
