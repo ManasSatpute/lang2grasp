@@ -18,6 +18,8 @@ robosuite auto-registers any subclass of its env base class by class name (see
 
 from __future__ import annotations
 
+from collections.abc import Callable
+
 from robosuite.environments.manipulation.lift import Lift
 from robosuite.models.arenas import TableArena
 from robosuite.models.objects import BallObject, BoxObject, CylinderObject, MujocoObject
@@ -27,6 +29,11 @@ from robosuite.utils.placement_samplers import UniformRandomSampler
 from objects.object_params import ObjectParams
 
 _BUILDERS = {"box": BoxObject, "cylinder": CylinderObject, "ball": BallObject}
+
+#: Either a fixed object (the per-object-specialist path) or a zero-arg callable
+#: drawing a fresh one (the domain-randomization path, e.g.
+#: `objects.object_params.sample_object_params`) -- see `ParamLift.__init__`.
+ObjectParamsSource = ObjectParams | Callable[[], ObjectParams]
 
 
 def build_mujoco_object(params: ObjectParams) -> MujocoObject:
@@ -46,10 +53,21 @@ def build_mujoco_object(params: ObjectParams) -> MujocoObject:
 
 
 class ParamLift(Lift):
-    """``Lift`` with the cube replaced by an object built from ``object_params``."""
+    """``Lift`` with the cube replaced by an object built from ``object_params``.
 
-    def __init__(self, *args, object_params: ObjectParams, **kwargs) -> None:
-        self.object_params = object_params
+    When ``object_params`` is a callable, ``_load_model`` re-invokes it every call --
+    i.e. every episode when the env is built with ``hard_reset=True`` (see
+    ``rl/env.py``'s ``EnvConfig.randomize_object``), so each episode gets a fresh
+    sample from a continuous distribution instead of one fixed object baked in at
+    construction. ``self.object_params`` always reflects whichever instance is
+    *currently* loaded, fixed or freshly sampled -- callers (e.g. ``rl/env.py``, to
+    build this episode's z-vector or resolve its crush-force threshold) read it back
+    after ``reset()``, not the constructor argument.
+    """
+
+    def __init__(self, *args, object_params: ObjectParamsSource, **kwargs) -> None:
+        self._object_params_source = object_params
+        self.object_params = object_params() if callable(object_params) else object_params
         super().__init__(*args, **kwargs)
 
     def _load_model(self) -> None:
@@ -58,6 +76,9 @@ class ParamLift(Lift):
         # skips straight to Lift's parent, since Lift's own _load_model is exactly
         # what we're replacing.
         super(Lift, self)._load_model()
+
+        if callable(self._object_params_source):
+            self.object_params = self._object_params_source()
 
         xpos = self.robots[0].robot_model.base_xpos_offset["table"](self.table_full_size[0])
         self.robots[0].robot_model.set_base_xpos(xpos)

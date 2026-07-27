@@ -5,16 +5,19 @@ arm, through a native **Gymnasium** interface, plus an LLM-driven pipeline that 
 text description of an object into the physical parameters (`ObjectParams`) that
 parameterise the sim. Built for a SLURM cluster with 1 GPU and 12 CPU cores per job.
 
-No custom policies — a baseline you can trust before changing things. Reward shaping
-is limited to a genuine fingertip-force-sensor-driven crush penalty/termination for
-LLM-described objects (see "How it fits together" below); the stock cube baseline is
-otherwise untouched robosuite `Lift`.
+No custom policies in the base pipeline — a baseline you can trust before changing
+things. Reward shaping is limited to a genuine fingertip-force-sensor-driven crush
+penalty/termination for LLM-described objects (see "How it fits together" below); the
+stock cube baseline is otherwise untouched robosuite `Lift`. Two custom feature
+extractors do exist for the paradigm-switch experiment track (see below) — they're
+opt-in, off the baseline pipeline entirely.
 
 ## Contents
 
 - [Layout](#layout)
 - [Setup](#setup)
 - [Pipeline: prompt → SAC policy → Panda rollout](#pipeline-prompt--sac-policy--panda-rollout)
+- [Paradigm switch: domain randomization vs. per-object specialists](#paradigm-switch-domain-randomization-vs-per-object-specialists)
 - [Running on a Slurm cluster (CSF3)](#running-on-a-slurm-cluster-csf3)
 - [Training that survives the wall clock](#training-that-survives-the-wall-clock)
 - [Sizing for 12 cores + 1 GPU](#sizing-for-12-cores--1-gpu)
@@ -234,6 +237,51 @@ PYTHONPATH=src python src/scripts/train_all_objects.py \
 PYTHONPATH=src python src/scripts/rollout_all_objects.py --runs-dir runs --episodes 20
 ```
 
+## Paradigm switch: domain randomization vs. per-object specialists
+
+Everything above trains one SAC *specialist* per object (`train_object.py`/
+`train_all_objects.py`): a fixed `ObjectParams` baked into the env for that whole run.
+That's an oracle topline, not something that scales — a specialist has no way to
+handle an object it wasn't trained on. `scripts/train_paradigm.py` trains three
+policies against a *continuous distribution* of objects instead (a fresh
+`ObjectParams` sampled every episode — shape/size/density/friction — via
+`EnvConfig.randomize_object`/`objects.object_params.sample_object_params`), differing
+only in what each is allowed to see:
+
+| variant | sees | feature extractor | question it answers |
+|---|---|---|---|
+| `blind` | proprioception + object pose + fingertip force (same as the baseline obs) | stock `MlpPolicy` | memoryless floor — no way to tell objects apart within an episode |
+| `blind_hist` | `blind`'s obs + a GRU over the last `--history-len` (default 16) steps of proprioception + force | `rl.policies.HistoryGRUExtractor` | the honest ceiling — implicit system identification from how the arm's own sensors responded, no cheating via a ground-truth parameter |
+| `param` | `blind`'s obs + a (possibly noisy) object-parameter vector `z` | `rl.policies.FiLMExtractor` | the informed upper bound — told approximately what it's holding |
+
+`z` (`objects.object_params.object_params_to_z`/`Z_DIM`) is a fixed-width, shape-agnostic
+encoding: one-hot shape, size zero-padded to the widest shape's dimensionality, density,
+friction. `mass_kg` is deliberately **not** in `z` — it's `density * volume_m3`, a
+deterministic function of two dims already in `z`, so including it too would just hand
+the FiLM layer a redundant, perfectly-collinear input. `param`'s `z` is noised
+(`--z-noise-std`, default 0.1 relative) on its continuous dims only — it's meant to model
+a noisy sysID-style estimate, not ground truth.
+
+```bash
+PYTHONPATH=src python src/scripts/train_paradigm.py --variant blind \
+    --base-config src/configs/policy/sac.json
+PYTHONPATH=src python src/scripts/train_paradigm.py --variant blind_hist \
+    --base-config src/configs/policy/sac.json --history-len 16
+PYTHONPATH=src python src/scripts/train_paradigm.py --variant param \
+    --base-config src/configs/policy/sac.json --z-noise-std 0.1
+```
+
+A domain-randomized episode needs a MuJoCo recompile (shape/size can change), so these
+runs use `hard_reset=True` internally — markedly slower per reset than the fixed-object
+specialist path (`hard_reset=False`, reuses the compiled model). Budget accordingly.
+
+Evaluating a trained `blind`/`blind_hist`/`param` policy against one specific real
+object (rather than the training distribution) reuses the existing rollout machinery:
+`rl.rollout.rollout(..., object_override=params)`, with `randomize_object` turned back
+off on the override (`EnvConfig.object` and `EnvConfig.randomize_object` are mutually
+exclusive) — there isn't yet a dedicated 3-way comparison script analogous to
+`compare_policies.py` for this track.
+
 ## Running on a Slurm cluster (CSF3)
 
 > **Scheduler check first.** The job scripts below are Slurm (`#SBATCH`, `sbatch`,
@@ -252,7 +300,8 @@ what's cluster-specific lives in that one file.
 2. **Every `.slurm` file**: `#SBATCH --partition=gpuL` is a placeholder — set it to
    your allocation's actual GPU partition. `extract_object_params.slurm` uses
    `<CPU_PARTITION>` instead, since that stage needs no GPU.
-3. **`train.slurm` / `train_objects_array.slurm`**: set
+3. **`train.slurm` / `train_objects_array.slurm` / `train_paradigm.slurm` /
+   `train_paradigm_array.slurm`**: set
    ```bash
    RUNS_DIR="/scratch/${USER}/lang2grasp_runs"      # <-- must be shared storage
    ```
@@ -287,11 +336,26 @@ sbatch src/slurm/train_objects_array.slurm
 sbatch --array=0-4 --export=ALL,OBJECTS_DIR=src/configs/objects/width_mass_set \
     src/slurm/train_objects_array.slurm
 
+# Stage 2, paradigm switch (see "Paradigm switch" above): smoke-check on real
+# hardware first (~2 min; there's no dedicated tests/ script for this path --
+# a tiny TOTAL_TIMESTEPS run is the check):
+sbatch --time=00:15:00 --export=ALL,VARIANT=blind,TOTAL_TIMESTEPS=2000 \
+    src/slurm/train_paradigm.slurm
+# One variant at a time:
+sbatch --export=ALL,VARIANT=blind      src/slurm/train_paradigm.slurm
+sbatch --export=ALL,VARIANT=blind_hist src/slurm/train_paradigm.slurm
+sbatch --export=ALL,VARIANT=param      src/slurm/train_paradigm.slurm
+# ...or all three as one array job (index 0/1/2 = blind/blind_hist/param):
+sbatch src/slurm/train_paradigm_array.slurm
+
 # Stage 3: rollout.
 sbatch --export=ALL,RUN_DIR=/scratch/$USER/lang2grasp_runs/lift_${JOB}_s0 \
     src/slurm/rollout.slurm
 sbatch src/slurm/rollout_all_objects.slurm   # every lift_<object> run under RUNS_DIR
 sbatch --export=ALL,PLOT=1,VIDEO=1 src/slurm/rollout_all_objects.slurm   # + plot + per-object video
+# rollout.slurm is generic -- point it at a paradigm run dir the same way:
+sbatch --export=ALL,RUN_DIR=/scratch/$USER/lang2grasp_runs/paradigm_blind_s0,EPISODES=20 \
+    src/slurm/rollout.slurm
 
 # Stage 3, live view: watch the MuJoCo viewer from your own machine while it runs
 # on a headless CSF3 node, via a VNC session -- see "Watching a rollout live" below.
@@ -323,6 +387,14 @@ PYTHONPATH=src python src/tests/force_sensor_test.py
 
 PYTHONPATH=src python -m rl.train --config src/configs/policy/sac.json
 PYTHONPATH=src python -m rl.rollout --run-dir runs/SAC_local --episodes 10
+
+# Paradigm switch (see "Paradigm switch" above):
+PYTHONPATH=src python src/tests/paradigm_test.py
+PYTHONPATH=src python src/scripts/train_paradigm.py --variant blind --total-timesteps 2000  # smoke check
+PYTHONPATH=src python src/scripts/train_paradigm.py --variant blind
+PYTHONPATH=src python src/scripts/train_paradigm.py --variant blind_hist --history-len 16
+PYTHONPATH=src python src/scripts/train_paradigm.py --variant param --z-noise-std 0.1
+PYTHONPATH=src python -m rl.rollout --run-dir runs/paradigm_blind --episodes 20
 ```
 
 ### Job script files
@@ -336,7 +408,9 @@ src/slurm/
   extract_object_params.slurm  # stage 1: prompt -> LLM -> configs/objects/<name>.json
   train.slurm                  # stage 2: one run -- baseline cube, or OBJECT=<snapshot.json>
   train_objects_array.slurm    # stage 2: all objects in OBJECTS_DIR as parallel array tasks
-  rollout.slurm                # stage 3: roll out one run dir
+  train_paradigm.slurm         # stage 2, paradigm switch: one VARIANT=blind|blind_hist|param run
+  train_paradigm_array.slurm   # stage 2, paradigm switch: all 3 variants as parallel array tasks
+  rollout.slurm                # stage 3: roll out one run dir (paradigm runs too -- it's generic)
   rollout_all_objects.slurm    # stage 3: roll out every lift_<object> run, results/plot/video
   rollout_vnc.slurm            # stage 3: live MuJoCo viewer over VNC, see below
   compare_policies.slurm       # stage 3: generic baseline vs. per-object policies

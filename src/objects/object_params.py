@@ -34,8 +34,11 @@ from __future__ import annotations
 
 import logging
 import math
+from collections.abc import Sequence
 from dataclasses import dataclass, field
 from typing import Literal
+
+import numpy as np
 
 LOGGER = logging.getLogger(__name__)
 
@@ -202,3 +205,76 @@ class ObjectParams:
         """
         compression_mm = max(0.0, self.rest_width_mm - aperture_mm)
         return self.spring_Npm * compression_mm / 1000.0
+
+
+#: Shape order used by `sample_object_params`/`object_params_to_z` -- fixed so a
+#: one-hot position always means the same shape across every call/process.
+_Z_SHAPES: tuple[Shape, ...] = tuple(_SIZE_DIMS)  # ("box", "cylinder", "ball")
+_Z_MAX_SIZE_DIMS = max(_SIZE_DIMS.values())
+
+#: one-hot shape (len(_Z_SHAPES)) + size zero-padded to _Z_MAX_SIZE_DIMS + density (1)
+#: + friction (3). `mass_kg` is deliberately excluded: it's `density * volume_m3`, a
+#: deterministic function of two dims already in z (density, size) -- feeding both
+#: would just hand a FiLM/conditioning layer a redundant, perfectly-collinear input.
+Z_DIM = len(_Z_SHAPES) + _Z_MAX_SIZE_DIMS + 1 + 3
+
+
+def sample_object_params(shapes: Sequence[Shape] = _Z_SHAPES, name: str = "domain_random") -> ObjectParams:
+    """Draw one :class:`ObjectParams` from a continuous, per-shape-bounded distribution.
+
+    Domain-randomization sampler for the paradigm-switch baselines (pi_blind /
+    pi_blind+hist / pi_param, see `objects/lift_object_task.ParamLift`): reuses the
+    exact clamp ranges `__post_init__` already enforces (`_SIZE_BOUNDS_M`,
+    `_DENSITY_RANGE`, `_FRICTION_BOUNDS`) as sampling ranges, so a sampled object is by
+    construction never something `__post_init__` would have had to clamp.
+
+    Uses the *global* `numpy.random` legacy API (`np.random.uniform`/`randint`), not a
+    local `Generator` -- consistent with robosuite's own placement sampler, which also
+    draws from the global RNG (see `rl/env.py`'s `reset()` docstring): this way
+    `np.random.seed(seed)` there reproduces object sampling along with placement,
+    instead of leaving a second, independently-seeded RNG stream.
+    """
+    shape = shapes[np.random.randint(len(shapes))]
+    bounds = _SIZE_BOUNDS_M[shape]
+    size = tuple(float(np.random.uniform(lo, hi)) for lo, hi in bounds)
+    density = float(np.random.uniform(*_DENSITY_RANGE))
+    friction = tuple(float(np.random.uniform(lo, hi)) for lo, hi in _FRICTION_BOUNDS)
+    return ObjectParams(name=name, shape=shape, size=size, density=density, friction=friction)
+
+
+def object_params_to_z(params: ObjectParams) -> np.ndarray:
+    """Fixed-width, shape-agnostic physical-parameter vector (`Z_DIM`,), float32.
+
+    Layout: one-hot shape | size (zero-padded to `_Z_MAX_SIZE_DIMS`) | density |
+    friction (3). See `Z_DIM`'s docstring for why `mass_kg` is excluded. The one-hot
+    shape block lets a FiLM/conditioning layer tell which padded size slots are
+    meaningful for this object without a variable-width input.
+    """
+    shape_onehot = [1.0 if params.shape == s else 0.0 for s in _Z_SHAPES]
+    size_padded = list(params.size) + [0.0] * (_Z_MAX_SIZE_DIMS - len(params.size))
+    z = shape_onehot + size_padded + [params.density] + list(params.friction)
+    return np.asarray(z, dtype=np.float32)
+
+
+#: z-vector indices left exact by `object_params_to_noisy_z` -- the one-hot shape
+#: block. Shape is assumed visually obvious (unlike density/friction, which have to be
+#: inferred), so only indices from here on get perturbed.
+_Z_NOISY_FROM = len(_Z_SHAPES)
+
+
+def object_params_to_noisy_z(params: ObjectParams, rel_noise_std: float = 0.1) -> np.ndarray:
+    """`object_params_to_z`, with multiplicative Gaussian noise on its continuous dims.
+
+    Models a noisy sysID-style estimate of an object's physical parameters -- the
+    input `pi_param` FiLM-conditions on, as opposed to `pi_blind`, which never sees z
+    at all. `rel_noise_std=0.0` returns the exact (noiseless) z. Draws from the
+    *global* `numpy.random` API, same reasoning as `sample_object_params`.
+    """
+    z = object_params_to_z(params)
+    if rel_noise_std <= 0.0:
+        return z
+    noisy = z.copy()
+    continuous = noisy[_Z_NOISY_FROM:]
+    scale = 1.0 + np.random.normal(0.0, rel_noise_std, size=continuous.shape).astype(np.float32)
+    noisy[_Z_NOISY_FROM:] = continuous * scale
+    return noisy
