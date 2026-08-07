@@ -191,7 +191,26 @@ generic baseline with no `ObjectParams` at all. Crush penalty/termination
 (`EnvConfig.crush_penalty_coeff`/`terminate_on_crush`) are unconditional whenever
 `env.object` is set; `EnvConfig.grip_force_shaping` (off by default) only adds an
 extra bonus for staying within `grip_force_min_N`/`max_N` — see `rl/env.py`'s module
-docstring for the full mechanism. `ParamLift`
+docstring for the full mechanism.
+
+**Golden physics vs. extracted perception.** `EnvConfig.object` is what's actually
+built into the MuJoCo scene — the real/"golden" object. `train_object.py`/
+`train_all_objects.py` load it from `extraction.param_prompts.golden_object_params`
+(the `PRIORS` table) when a golden entry exists for that object's name, and set the
+*extracted* snapshot (`scripts/extract_object_params.py`'s output — potentially an
+imperfect LLM guess) as a separate `EnvConfig.extracted_object` instead. Crush
+penalty/termination, the grip-force bonus, and `include_object_z`'s z-vector are all
+computed from `extracted_object` when it's set, falling back to `object` otherwise —
+i.e. the policy is trained against its (possibly wrong) *belief* about the object,
+while what it's actually lifting (and how much it actually masses/how it actually
+slides) is the golden object. Objects with no golden entry (e.g. `width_mass_set`,
+generated analytically rather than extracted) keep the old coupled behaviour
+(`extracted_object=None`, so perception falls back to `object`). Note that
+`MockBackend` (the `--backend mock` default) returns `PRIORS` verbatim as its
+"extracted" fields, so with the mock backend golden and extracted are always
+identical and this split is a no-op — it only does something once
+`extract_object_params.py --backend anthropic/openai/groq` produces values that
+actually diverge from `PRIORS`. `ParamLift`
 (`src/objects/lift_object_task.py`) is a `robosuite.Lift` subclass whose `_load_model`
 builds the object from `shape`/`size`/`density`/`friction` instead of the stock red
 cube — every other `Lift` method (`reward`, `_check_success`, ...) references

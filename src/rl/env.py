@@ -25,12 +25,25 @@ sensor you don't."
 Crush behaviour is object-specific (keyed off ``ObjectParams.crush_force_N``, which
 only exists once ``EnvConfig.object`` is set): whenever ``object`` is set, every step
 computes ``contact_force_N = max(|left force|, |right force|)`` from the real sensor,
-and if it exceeds ``object.crush_force_N`` the episode pays a reward penalty
-proportional to the excess (``EnvConfig.crush_penalty_coeff``) and, by default,
+and if it exceeds the *perceived* object's ``crush_force_N`` the episode pays a reward
+penalty proportional to the excess (``EnvConfig.crush_penalty_coeff``) and, by default,
 terminates (``EnvConfig.terminate_on_crush``) -- this is unconditional (not gated by
 ``grip_force_shaping``), since fragility shouldn't be an opt-in experiment. Separately,
 ``EnvConfig.grip_force_shaping`` still exists, but now controls *only* the optional
-"safe-hold" bonus for staying within ``object.grip_force_min_N``/``max_N``.
+"safe-hold" bonus for staying within the perceived object's ``grip_force_min_N``/``max_N``.
+
+**Golden physics vs. extracted perception.** ``EnvConfig.object`` is what actually gets
+built into the MuJoCo scene (``ParamLift``) -- the real/"golden" object, typically loaded
+from a trusted source (e.g. ``extraction.param_prompts.golden_object_params``) rather
+than an LLM guess. ``EnvConfig.extracted_object``, when set, is a *separate* (possibly
+imperfect) ``ObjectParams`` -- e.g. an LLM's extraction from a text prompt -- that the
+crush penalty/termination, the grip-force bonus, and ``include_object_z``'s z-vector are
+computed from instead: the policy is trained against what it *believes* about the
+object (from extraction), while what actually gets lifted (and how much it actually
+masses/how it actually slides) is the golden object. This is what lets a per-object run
+test robustness to extraction error, rather than extraction error simply not existing
+(golden == extracted) as it did before. ``extracted_object=None`` (the default) falls
+back to using ``object`` for perception too -- byte-for-byte the old behaviour.
 """
 
 from __future__ import annotations
@@ -92,12 +105,22 @@ class EnvConfig:
     camera_name: str = "agentview"
     camera_height: int = 256
     camera_width: int = 256
-    #: LLM-derived physical params for the liftable object. None reproduces the stock
-    #: robosuite Lift cube exactly (env_name="Lift", no ParamLift involved at all),
-    #: unless `randomize_object` is set instead (see below). Mutually exclusive with
+    #: The object actually built into the MuJoCo scene (`ParamLift`) -- the "golden"/
+    #: ground-truth physical object. None reproduces the stock robosuite Lift cube
+    #: exactly (env_name="Lift", no ParamLift involved at all), unless
+    #: `randomize_object` is set instead (see below). Mutually exclusive with
     #: `randomize_object`: there's no single fixed object once every episode draws
     #: its own.
     object: ObjectParams | None = None
+    #: A separate, possibly-imperfect `ObjectParams` (e.g. an LLM's extraction from a
+    #: text prompt) that crush penalty/termination, the grip-force bonus, and
+    #: `include_object_z`'s z-vector are computed from *instead of* `object` -- i.e.
+    #: what the policy is rewarded/conditioned on is its belief about the object, not
+    #: the real physics it's actually lifting (`object`). None (the default) falls
+    #: back to `object` for perception too -- the old, coupled behaviour. Only
+    #: meaningful when `object` is set. See module docstring, "Golden physics vs.
+    #: extracted perception".
+    extracted_object: ObjectParams | None = None
 
     #: The paradigm-switch mode (see `objects.object_params.sample_object_params`):
     #: instead of one fixed per-object specialist, `ParamLift` draws a fresh
@@ -160,6 +183,8 @@ class EnvConfig:
         # Same round-trip concern: a loaded JSON snapshot hands back a plain dict.
         if isinstance(self.object, dict):
             self.object = ObjectParams(**self.object)
+        if isinstance(self.extracted_object, dict):
+            self.extracted_object = ObjectParams(**self.extracted_object)
         if self.randomize_object and self.object is not None:
             raise ValueError("randomize_object=True is mutually exclusive with a fixed `object`.")
         has_object = self.object is not None or self.randomize_object
@@ -167,6 +192,12 @@ class EnvConfig:
             raise ValueError("grip_force_shaping requires `object` or randomize_object.")
         if self.include_object_z and not has_object:
             raise ValueError("include_object_z requires `object` or randomize_object.")
+        if self.extracted_object is not None and self.object is None:
+            raise ValueError(
+                "extracted_object requires a fixed `object` (it's a separate, possibly "
+                "imperfect ObjectParams for the *same* golden object; meaningless "
+                "without one -- and not currently supported alongside randomize_object)."
+            )
 
 
 def resolve_controller_config(controller_name: str, robot: str) -> dict[str, Any]:
@@ -386,8 +417,14 @@ class RobosuiteLiftEnv(gym.Env):
         return obs_dict
 
     def _resolve_current_object(self) -> ObjectParams | None:
-        """This episode's true `ObjectParams` -- fixed (`cfg.object`), freshly sampled
-        by `ParamLift` this reset (`cfg.randomize_object`), or None (stock cube).
+        """This episode's *perceived* `ObjectParams` -- what crush penalty/
+        termination, the grip-force bonus, and `include_object_z`'s z-vector are
+        computed from. Fixed-object runs use `cfg.extracted_object` when set
+        (falling back to `cfg.object`, the golden physical object, otherwise -- see
+        module docstring, "Golden physics vs. extracted perception"); randomized runs
+        use whatever `ParamLift` actually sampled this episode (there is no separate
+        extracted-vs-golden split under `randomize_object` yet); no `object` at all
+        (the stock-cube baseline) has no perceived object either.
 
         Must be called *after* `self._env.reset()`: in the `randomize_object` case,
         `ParamLift._load_model()` (invoked by that reset, since `hard_reset=True`)
@@ -395,7 +432,7 @@ class RobosuiteLiftEnv(gym.Env):
         `self._env.object_params` reflects it.
         """
         if self.cfg.object is not None:
-            return self.cfg.object
+            return self.cfg.extracted_object or self.cfg.object
         if self.cfg.randomize_object:
             return self._env.object_params
         return None

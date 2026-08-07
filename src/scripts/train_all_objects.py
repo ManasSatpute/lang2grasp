@@ -15,6 +15,7 @@ import logging
 from pathlib import Path
 
 from rl.config import load_config
+from extraction.param_prompts import golden_object_params
 from objects.object_params import ObjectParams
 from rl.train import train
 from common.utils import setup_logging
@@ -45,19 +46,27 @@ def main() -> None:
 
     results: dict[str, Path] = {}
     for path in object_files:
-        params = ObjectParams(**json.loads(path.read_text()))
+        extracted_params = ObjectParams(**json.loads(path.read_text()))
+        golden_params = golden_object_params(extracted_params.name)
+        if golden_params is None:
+            LOGGER.info(
+                "No golden entry for %r; physics and perception both use the "
+                "extracted params (old, coupled behaviour).",
+                extracted_params.name,
+            )
         overrides = {
             "total_timesteps": args.total_timesteps,
             "log_dir": args.log_dir,
             "seed": args.seed,
-            "run_name": f"lift_{params.name}",
+            "run_name": f"lift_{extracted_params.name}",
         }
         cfg = load_config(args.base_config, overrides=overrides)
-        cfg.env.object = params
+        cfg.env.object = golden_params or extracted_params
+        cfg.env.extracted_object = extracted_params if golden_params is not None else None
 
-        LOGGER.info("=== Training %s ===", params.name)
+        LOGGER.info("=== Training %s ===", extracted_params.name)
         run_dir, _ = train(cfg)
-        results[params.name] = run_dir
+        results[extracted_params.name] = run_dir
 
     LOGGER.info("All objects trained:")
     for name, run_dir in results.items():

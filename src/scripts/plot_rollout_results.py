@@ -34,6 +34,45 @@ def plot_results(rows, path="rollout_success_rate.png"):
     print(f"Wrote {path}")
 
 
+def plot_extraction_accuracy(numeric_summary, categorical_summary, path="extraction_accuracy.png"):
+    """Two-panel accuracy report for scripts/evaluate_extraction_accuracy.py: mean
+    relative error per numeric field (top, horizontal bars) and match rate per
+    categorical field (bottom). `numeric_summary`/`categorical_summary`: lists of
+    dicts from that script's `summarize()`, already sorted the way they should
+    appear top-to-bottom / left-to-right. Numeric fields with no defined
+    `mean_pct_error` (a near-zero golden denominator) are dropped from the top panel
+    -- see that script's module docstring."""
+    plotted = [r for r in numeric_summary if r["mean_pct_error"] is not None]
+    fields = [r["field"] for r in plotted]
+    pct_errors = [r["mean_pct_error"] for r in plotted]
+
+    cat_fields = [r["field"] for r in categorical_summary]
+    accuracies = [r["accuracy"] for r in categorical_summary]
+
+    fig, (ax1, ax2) = plt.subplots(
+        2,
+        1,
+        figsize=(max(6, 0.5 * max(len(fields), 1) + 4), 8),
+        gridspec_kw={"height_ratios": [max(2, len(fields)), max(2, len(cat_fields))]},
+    )
+
+    ax1.barh(fields, pct_errors, color="tab:orange")
+    ax1.invert_yaxis()  # largest error at top
+    ax1.set_xlabel("mean relative error (%) vs. golden dataset")
+    ax1.grid(alpha=0.3, axis="x")
+    ax1.set_title("Extraction error by numeric field")
+
+    ax2.bar(cat_fields, accuracies, color="tab:blue")
+    ax2.set_ylabel("match rate (%)")
+    ax2.set_ylim(0, 100)
+    ax2.grid(alpha=0.3, axis="y")
+    ax2.set_title("Extraction accuracy by categorical field")
+
+    fig.tight_layout()
+    fig.savefig(path, dpi=130)
+    print(f"Wrote {path}")
+
+
 def plot_comparison(rows, path="policy_comparison.png"):
     """Grouped bar chart: generic (no extracted params) vs. object-aware policy,
     per object. rows: list of dicts with object/generic_success_rate/
