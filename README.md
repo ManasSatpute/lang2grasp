@@ -59,6 +59,7 @@ lang2grasp/
 │   ├── scripts/
 │   │   ├── check_gpu.py             # GPU hello-world
 │   │   ├── extract_object_params.py # stage 1: prompt -> LLM -> ObjectParams JSON
+│   │   ├── evaluate_extraction_accuracy.py # stage 1.5: extraction accuracy vs. golden dataset
 │   │   ├── generate_width_mass_objects.py # stage 1 (analytic): the width/mass-matched 5-object set
 │   │   ├── train_object.py          # stage 2: train one object's SAC policy
 │   │   ├── train_all_objects.py     # stage 2: local sequential driver, all objects in a dir
@@ -69,7 +70,7 @@ lang2grasp/
 │   │   ├── smoke_test.py        # end-to-end: check_env + train + save/load round-trip + rollout
 │   │   └── force_sensor_test.py # fingertip force sensor + crush penalty/termination + object-set check
 │   ├── slurm/                   # CSF3 job scripts -- see "Running on a Slurm cluster" below
-│   └── results/                 # rollout_all_objects.py / compare_policies.py output
+│   └── results/                 # evaluate_extraction_accuracy.py / rollout_all_objects.py / compare_policies.py output
 ```
 
 No install step beyond the one-time environment setup below. Every entry point is
@@ -112,13 +113,22 @@ None of this requires a Slurm cluster -- everything below also runs with plain
 
 ## Pipeline: prompt → SAC policy → Panda rollout
 
-Three stages, each a separate script so they can run independently (extraction needs
-an LLM/network; training and rollout never do):
+Three stages plus an extraction accuracy check, each a separate script so they can run
+independently (extraction needs an LLM/network; training and rollout never do). The
+accuracy check (stage 1.5) only needs stage 1's output, so it runs right after
+extraction rather than waiting on training/rollout:
 
 ```bash
 # 1. Prompt -> LLM -> physical parameters, snapshotted to src/configs/objects/<name>.json.
 #    --backend mock is offline/deterministic (no API key); anthropic/openai/groq call a real LLM.
 PYTHONPATH=src python src/scripts/extract_object_params.py --backend mock
+
+# 1.5. How accurate was that extraction against the golden (ground-truth) dataset?
+#      Independent of any training run -- can run right after stage 1, before stage 2.
+#      Always writes src/results/extraction_accuracy_{detail,summary}.csv; --plot adds
+#      src/results/extraction_accuracy.png. --backend mock above trivially scores 0
+#      error (MockBackend echoes PRIORS back) -- use a real backend to measure anything.
+PYTHONPATH=src python src/scripts/evaluate_extraction_accuracy.py --plot
 
 # 2. Train one SAC policy per object. Locally, sequentially:
 PYTHONPATH=src python src/scripts/train_all_objects.py --base-config src/configs/policy/sac.json
@@ -317,8 +327,9 @@ what's cluster-specific lives in that one file.
 1. **`src/slurm/env.sh`**: `CONDA_MODULE`/`CUDA_MODULE` are already set to the values
    from Setup. Only touch these if CSF3's module names change.
 2. **Every `.slurm` file**: `#SBATCH --partition=gpuL` is a placeholder — set it to
-   your allocation's actual GPU partition. `extract_object_params.slurm` uses
-   `<CPU_PARTITION>` instead, since that stage needs no GPU.
+   your allocation's actual GPU partition. `extract_object_params.slurm` and
+   `evaluate_extraction_accuracy.slurm` use `<CPU_PARTITION>` instead, since neither
+   stage needs a GPU.
 3. **`train.slurm` / `train_objects_array.slurm` / `train_paradigm.slurm` /
    `train_paradigm_array.slurm`**: set
    ```bash
@@ -342,6 +353,12 @@ sbatch src/slurm/extract_object_params.slurm
 # Width/mass-matched set (analytic, no LLM/network involved -- cheap enough to just
 # run directly on the login node instead of via sbatch):
 PYTHONPATH=src python src/scripts/generate_width_mass_objects.py
+
+# Stage 1.5: how accurate was the extraction against the golden dataset? Reads the
+# snapshots extract_object_params.slurm just wrote; independent of any training run,
+# so it runs right after extraction and doesn't need to wait for rollout.
+sbatch src/slurm/evaluate_extraction_accuracy.slurm
+sbatch --export=ALL,PLOT=1 src/slurm/evaluate_extraction_accuracy.slurm   # + accuracy chart
 
 # Stage 2: train. Baseline (stock Lift cube):
 JOB=$(sbatch --parsable src/slurm/train.slurm)
@@ -425,6 +442,7 @@ src/slurm/
   smoke_test.slurm             # gate 2: check_env + 3k-step train + save/load round-trip + rollout
   force_sensor_test.slurm      # gate 3: fingertip force sensor + crush + width_mass_set (CPU-only)
   extract_object_params.slurm  # stage 1: prompt -> LLM -> configs/objects/<name>.json
+  evaluate_extraction_accuracy.slurm # stage 1.5: extraction accuracy vs. golden dataset, into results/
   train.slurm                  # stage 2: one run -- baseline cube, or OBJECT=<snapshot.json>
   train_objects_array.slurm    # stage 2: all objects in OBJECTS_DIR as parallel array tasks
   train_paradigm.slurm         # stage 2, paradigm switch: one VARIANT=blind|blind_hist|param run
