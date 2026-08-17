@@ -12,10 +12,17 @@
 # no sbatch needed) and commit the resulting JSON snapshots -- training and
 # rollout never call an LLM, so only this one stage is network-sensitive.
 #
+# API key: put it in a `.env` file at the repo root (copy `.env.example`,
+# gitignored) -- `extraction/llm_backends.py` loads it automatically via
+# python-dotenv, since `env.sh` cd's into SLURM_SUBMIT_DIR (the repo root) before
+# this runs. That avoids putting a real key on the `sbatch --export=` command
+# line, where it lands in shell history and `scontrol show job`. Passing it via
+# --export (below) still works and takes precedence over `.env` if both are set.
+#
 # Usage (from the repo root):
 #   sbatch src/slurm/extract_object_params.slurm                                   # --backend mock
-#   sbatch --export=ALL,BACKEND=anthropic,MODEL=claude-haiku-4-5,\
-#     ANTHROPIC_API_KEY=$ANTHROPIC_API_KEY src/slurm/extract_object_params.slurm
+#   sbatch --export=ALL,BACKEND=anthropic,MODEL=claude-haiku-4-5 src/slurm/extract_object_params.slurm
+#   sbatch --export=ALL,BACKEND=groq,MODEL=llama-3.3-70b-versatile src/slurm/extract_object_params.slurm
 
 #SBATCH --job-name=extract_params
 #SBATCH --partition=serial            # CSF3: single-core CPU queue, no GPU needed for this stage

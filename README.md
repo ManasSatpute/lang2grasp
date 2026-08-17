@@ -111,6 +111,20 @@ rebuild the env against the new CUDA version if it changed) to match.
 None of this requires a Slurm cluster -- everything below also runs with plain
 `python` on a laptop with a GPU (or CPU, just slower).
 
+**LLM API keys** (only needed for `extract_object_params.py --backend
+anthropic/openai/groq` -- skip this for `--backend mock`, the default):
+
+```bash
+cp .env.example .env
+# then edit .env and fill in the key(s) for the backend(s) you use, e.g.:
+#   GROQ_API_KEY=gsk_...
+```
+
+`.env` is gitignored -- real keys never get committed. `extraction/llm_backends.py`
+loads it automatically (via `python-dotenv`, in `requirements.txt`) whenever it's
+imported, so no `export`ing or `sbatch --export=...`ing keys by hand. A real
+environment variable, if one is already set, always wins over `.env`.
+
 ## Pipeline: prompt → SAC policy → Panda rollout
 
 Three stages plus an extraction accuracy check, each a separate script so they can run

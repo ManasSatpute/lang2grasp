@@ -24,6 +24,7 @@ env/
 # LLM backend API keys (ANTHROPIC_API_KEY / OPENAI_API_KEY / GROQ_API_KEY etc.)
 .env
 .env.*
+!.env.example
 
 # OS / editor cruft
 .DS_Store

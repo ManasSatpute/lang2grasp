@@ -10,6 +10,13 @@ Every backend implements the same one-method interface and returns a plain
 SDKs are imported lazily inside each backend's ``__init__`` so ``requirements.txt``
 doesn't have to hard-depend on any of them -- ``MockBackend`` needs none and
 is the default for tests, CI, and SLURM nodes with no API key or network.
+
+Each real backend's client (``Anthropic()``/``OpenAI()``/``Groq()``) reads its API
+key from the environment (``ANTHROPIC_API_KEY``/``OPENAI_API_KEY``/``GROQ_API_KEY``)
+on construction. Importing this module loads a repo-root ``.env`` file into the
+environment first (see ``.env.example``), so those variables can live in one
+gitignored file instead of being exported by hand every shell -- real shell/SLURM
+env vars still take precedence if both are set (``load_dotenv``'s default).
 """
 
 from __future__ import annotations
@@ -18,6 +25,13 @@ import json
 import re
 
 from extraction.param_prompts import JSON_SCHEMA, SYSTEM_PROMPT, prior_for
+
+try:
+    from dotenv import load_dotenv
+
+    load_dotenv()  # no-op if no .env file is found; never overrides a real env var
+except ImportError:
+    pass
 
 
 class ParamBackend:
