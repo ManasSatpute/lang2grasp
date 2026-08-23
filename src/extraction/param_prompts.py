@@ -23,8 +23,12 @@ everyday object, for a robot-arm grasping simulator (MuJoCo/robosuite).
 
 Given a short description of an object, output:
 - shape: the closest primitive -- "box", "cylinder", or "ball"
-- size: half-extents in metres. box needs 3 values [x, y, z]; cylinder needs 2 \
-[radius, half_height]; ball needs 1 [radius].
+- size: half-extents in metres, at the scale a small parallel-jaw robot gripper can \
+fully enclose and pick up -- roughly 0.005-0.06 m per half-extent (a cylinder's \
+half-height can go up to ~0.15 m). If the real object is much larger than that \
+(a brick, a bag of rice), describe a miniature/toy-scale version at that gripper \
+scale instead, keeping its proportions and material properties. box needs 3 values \
+[x, y, z]; cylinder needs 2 [radius, half_height]; ball needs 1 [radius].
 - density: kg/m^3. Solid steel is ~7850; wood ~700; a thin-walled/hollow object \
 (glass bottle, ceramic mug) is much lower (~300-900) than its bulk material \
 density because most of its volume is empty space.
@@ -35,10 +39,13 @@ smaller (roughly 0.001-0.01).
 - fragile: true if the object would crack, shatter, or crush under excess grip \
 force; false for rugged/tough objects.
 - grip_force_min_N: minimum per-finger force (Newtons) needed to hold the object \
-without it slipping.
+without it slipping. Roughly 0.5-3 N for something that slips easily (smooth, \
+low-friction, very light) up to 15-30 N for something that needs a firm hold \
+(heavy, or high-friction surface).
 - grip_force_max_N: maximum per-finger force (Newtons) the object can take before \
 it is damaged. For fragile objects this should be close to grip_force_min_N \
-(a narrow safe window); for rugged objects it can be much larger.
+(a narrow safe window, e.g. 2-8 N total range); for rugged objects it can be much \
+larger (tens to over a hundred N).
 - rgba: approximate colour as [r, g, b, a], each 0-1. Use [0.5, 0.5, 0.5, 1.0] if \
 the object's colour is not implied by its description.
 - spring_Npm: object stiffness (Newtons per metre), for a spring-compression grasp \
@@ -46,7 +53,26 @@ model. Roughly 20 N/m for a very soft/compliant object up to 10000 N/m for a rig
 one (steel, ceramic, brick).
 - crush_force_N: per-finger contact force (Newtons) that actually breaks the \
 object -- the real physical damage threshold, distinct from grip_force_max_N \
-(a friendlier training-time target). Can be much larger than grip_force_max_N.
+(a friendlier training-time target). Can be much larger than grip_force_max_N, \
+but scales with how much material the *specific miniature-scale object you're \
+describing* actually has (see the size guidance above), not just its material's \
+intrinsic toughness -- a small/thin piece of even a tough material (a thin steel \
+bolt, a small ceramic mug) breaks at a much lower absolute force than a large \
+solid chunk of the same material. Roughly 10-30 N for something that crushes very \
+easily, tens to ~150 N for a small tough object, a few hundred N for a larger/\
+solid tough object, 1000+ N only for something both large and essentially \
+unbreakable by hand.
+
+For calibration, three reference points at roughly fist-sized scale, spanning the \
+force range (a different object each -- interpolate/extrapolate for the one \
+you're actually describing, scaling down further for anything smaller than \
+fist-sized; don't reuse these numbers directly):
+- a thin-walled aluminium can: grip_force_min_N ~1, grip_force_max_N ~4, \
+crush_force_N ~12 (crushes very easily)
+- a wooden building block: grip_force_min_N ~6, grip_force_max_N ~40, \
+crush_force_N ~150 (rugged, moderate)
+- a solid rubber ball: grip_force_min_N ~3, grip_force_max_N ~70, \
+crush_force_N ~300 (tough, hard to damage even though compliant)
 
 Respond with only the JSON object, no other text."""
 
@@ -91,6 +117,27 @@ JSON_SCHEMA = {
         "crush_force_N",
     ],
     "additionalProperties": False,
+}
+
+#: A flat, value-shaped example response, for backends (GroqBackend) that put a
+#: schema *hint* directly in the prompt instead of relying on server-side schema
+#: enforcement. Deliberately not `JSON_SCHEMA["properties"]` -- that's shaped like
+#: ``{"shape": {"type": "string", "enum": [...]}}``, and a model shown that verbatim
+#: has been observed echoing the wrapper back as the value (``"shape": {"type":
+#: "box"}``) instead of a plain string. An example with real values in the actual
+#: response shape doesn't have that failure mode.
+EXAMPLE_RESPONSE: dict = {
+    "shape": "box",
+    "size": [0.03, 0.03, 0.03],
+    "density": 1000.0,
+    "friction": [0.5, 0.005, 0.0001],
+    "mass_class": "medium",
+    "fragile": False,
+    "grip_force_min_N": 5.0,
+    "grip_force_max_N": 30.0,
+    "rgba": [0.5, 0.5, 0.5, 1.0],
+    "spring_Npm": 1000.0,
+    "crush_force_N": 50.0,
 }
 
 #: name -> raw fields dict, matching JSON_SCHEMA. Ground-truth values for the 6

@@ -141,6 +141,14 @@ rollout to see it:
 #    src/results/extraction_accuracy.png. --no-evaluate skips the accuracy check.
 PYTHONPATH=src python src/scripts/extract_object_params.py --backend groq --plot
 
+#    --samples N draws N independent extractions per object and takes the median
+#    (numeric fields) / majority vote (categorical fields) across them instead of
+#    trusting a single call -- even at temperature 0, a single call has real sample-
+#    to-sample noise on the harder-to-calibrate fields (grip/crush force especially).
+#    Costs N backend calls per object; logs which fields actually disagreed and by
+#    how much. See extraction/param_extraction.py's module docstring for details.
+PYTHONPATH=src python src/scripts/extract_object_params.py --backend groq --samples 5
+
 # 2. Train one SAC policy per object. Locally, sequentially:
 PYTHONPATH=src python src/scripts/train_all_objects.py --base-config src/configs/policy/sac.json
 #    ...or one object at a time:

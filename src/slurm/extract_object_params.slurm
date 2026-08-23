@@ -17,10 +17,16 @@
 #
 # BACKEND is required -- there's no offline default.
 #
+# SAMPLES (default 1) draws that many independent extractions per object and takes
+# the median/majority vote across them -- meaningfully less noisy than a single call
+# (see extraction/param_extraction.py's module docstring) at the cost of SAMPLES x
+# the backend calls/runtime; bump --time accordingly for a large SAMPLES.
+#
 # Usage (from the repo root):
 #   sbatch --export=ALL,BACKEND=anthropic,MODEL=claude-haiku-4-5 src/slurm/extract_object_params.slurm
 #   sbatch --export=ALL,BACKEND=openai,MODEL=gpt-4o-mini src/slurm/extract_object_params.slurm
 #   sbatch --export=ALL,BACKEND=groq,MODEL=openai/gpt-oss-120b,PLOT=1 src/slurm/extract_object_params.slurm
+#   sbatch --export=ALL,BACKEND=groq,SAMPLES=5 --time=00:20:00 src/slurm/extract_object_params.slurm
 
 #SBATCH --job-name=extract_params
 #SBATCH --partition=serial            # CSF3: single-core CPU queue, no GPU needed for this stage
@@ -45,5 +51,9 @@ PLOT_FLAG=()
 if [ -n "${PLOT:-}" ]; then
   PLOT_FLAG=(--plot)
 fi
+SAMPLES_FLAG=()
+if [ -n "${SAMPLES:-}" ]; then
+  SAMPLES_FLAG=(--samples "$SAMPLES")
+fi
 
-python src/scripts/extract_object_params.py --backend "$BACKEND" "${MODEL_FLAG[@]}" "${PLOT_FLAG[@]}"
+python src/scripts/extract_object_params.py --backend "$BACKEND" "${MODEL_FLAG[@]}" "${PLOT_FLAG[@]}" "${SAMPLES_FLAG[@]}"

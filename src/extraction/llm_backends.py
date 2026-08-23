@@ -16,7 +16,7 @@ from __future__ import annotations
 import json
 import re
 
-from extraction.param_prompts import JSON_SCHEMA, SYSTEM_PROMPT
+from extraction.param_prompts import EXAMPLE_RESPONSE, JSON_SCHEMA, SYSTEM_PROMPT
 
 try:
     from dotenv import load_dotenv
@@ -45,6 +45,7 @@ class AnthropicBackend(ParamBackend):
         response = self.client.messages.create(
             model=self.model,
             max_tokens=1024,
+            temperature=0.0,  # a best-estimate point value, not a creative sample
             system=SYSTEM_PROMPT,
             messages=[{"role": "user", "content": prompt}],
             output_config={"format": {"type": "json_schema", "schema": JSON_SCHEMA}},
@@ -65,6 +66,7 @@ class OpenAIBackend(ParamBackend):
     def extract(self, prompt: str) -> dict:
         completion = self.client.chat.completions.create(
             model=self.model,
+            temperature=0.0,  # a best-estimate point value, not a creative sample
             messages=[
                 {"role": "system", "content": SYSTEM_PROMPT},
                 {"role": "user", "content": prompt},
@@ -81,8 +83,8 @@ class GroqBackend(ParamBackend):
     """Groq (OpenAI-compatible chat API), JSON-object mode.
 
     Groq's JSON-schema support varies by model, so this backend uses the more
-    broadly-supported ``json_object`` mode and puts the schema in the prompt
-    instead of relying on server-side schema enforcement.
+    broadly-supported ``json_object`` mode and puts an example response in the
+    prompt instead of relying on server-side schema enforcement.
     """
 
     def __init__(self, model: str = "openai/gpt-oss-120b") -> None:
@@ -92,14 +94,17 @@ class GroqBackend(ParamBackend):
         self.model = model
 
     def extract(self, prompt: str) -> dict:
-        schema_hint = json.dumps(JSON_SCHEMA["properties"], indent=2)
+        example = json.dumps(EXAMPLE_RESPONSE, indent=2)
         completion = self.client.chat.completions.create(
             model=self.model,
+            temperature=0.0,  # a best-estimate point value, not a creative sample
             messages=[
                 {
                     "role": "system",
-                    "content": f"{SYSTEM_PROMPT}\n\nRespond with a JSON object with exactly "
-                    f"these fields:\n{schema_hint}",
+                    "content": f"{SYSTEM_PROMPT}\n\nRespond with a JSON object shaped exactly "
+                    f"like this example, with every value replaced by your own estimate for "
+                    f"the described object (shape must be one of \"box\"/\"cylinder\"/\"ball\"):"
+                    f"\n{example}",
                 },
                 {"role": "user", "content": prompt},
             ],

@@ -13,10 +13,17 @@ none of the extracted names are in `extraction.param_prompts.PRIORS`, e.g. a cus
 `--prompts` file for objects with no golden entry. Pass `--no-evaluate` to skip it
 unconditionally, e.g. when scripting many extraction runs back-to-back.
 
+`--samples N` (default 1) draws N independent extractions per object and combines
+them (median per numeric field, majority vote per categorical field) instead of
+trusting a single call -- even at temperature 0, a single call has real sample-to-
+sample noise on the harder-to-calibrate fields (grip/crush force especially; see
+`extraction.param_extraction`'s module docstring). Costs N backend calls per object.
+
 Usage (from the repo root):
     PYTHONPATH=src python src/scripts/extract_object_params.py --backend anthropic --model claude-haiku-4-5
     PYTHONPATH=src python src/scripts/extract_object_params.py --backend openai --model gpt-4o-mini
     PYTHONPATH=src python src/scripts/extract_object_params.py --backend groq --model openai/gpt-oss-120b --plot
+    PYTHONPATH=src python src/scripts/extract_object_params.py --backend groq --samples 5
 """
 
 from __future__ import annotations
@@ -42,6 +49,12 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--model", default=None, help="Override the backend's default model.")
     parser.add_argument("--prompts", type=Path, default=Path("src/configs/objects/prompts.json"))
     parser.add_argument("--out-dir", type=Path, default=Path("src/configs/objects"))
+    parser.add_argument(
+        "--samples",
+        type=int,
+        default=1,
+        help="Independent extractions per object, combined via median/majority vote (default: 1).",
+    )
     parser.add_argument("--results-dir", type=Path, default=Path("src/results"), help="Stage 1.5 output dir.")
     parser.add_argument("--plot", action="store_true", help="Also save stage 1.5's accuracy chart.")
     parser.add_argument("--no-evaluate", action="store_true", help="Skip the stage 1.5 accuracy check.")
@@ -60,7 +73,7 @@ def main() -> None:
 
     args.out_dir.mkdir(parents=True, exist_ok=True)
     for name, prompt in objects.items():
-        params = extract_object_params(name, prompt, backend)
+        params = extract_object_params(name, prompt, backend, samples=args.samples)
         out_path = args.out_dir / f"{name}.json"
         out_path.write_text(json.dumps(dataclasses.asdict(params), indent=2))
         LOGGER.info("%s -> %s | %s", name, out_path, params)
