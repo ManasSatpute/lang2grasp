@@ -5,8 +5,11 @@ Compares `extract_object_params.py`'s per-object snapshots against
 categorical fields (`shape`, `mass_class`, `fragile`) as a match rate; numeric fields
 as mean absolute and relative error.
 
+`extract_object_params.py` runs this automatically right after extraction (stage 1 +
+1.5 as one step) whenever the extracted names overlap `PRIORS`. Run this script
+directly only to re-check/re-plot existing snapshots without calling an LLM again:
+
 Usage (from the repo root):
-    PYTHONPATH=src python src/scripts/extract_object_params.py --backend anthropic
     PYTHONPATH=src python src/scripts/evaluate_extraction_accuracy.py --plot
 """
 
@@ -143,16 +146,18 @@ def parse_args() -> argparse.Namespace:
     return parser.parse_args()
 
 
-def main() -> None:
-    setup_logging()
-    args = parse_args()
-    args.results_dir.mkdir(parents=True, exist_ok=True)
+def evaluate(extracted_dir: Path, results_dir: Path, plot: bool = False) -> None:
+    """Compare every snapshot in ``extracted_dir`` against the golden dataset, print a
+    report, and write ``results_dir``'s CSVs (and, if ``plot``, its chart). Also callable
+    directly from `extract_object_params.py` so extraction + accuracy run as one step.
+    """
+    results_dir.mkdir(parents=True, exist_ok=True)
 
     all_rows: list[dict] = []
     skipped: list[str] = []
     for name in sorted(PRIORS):
         golden = golden_object_params(name)
-        extracted = _load_extracted(args.extracted_dir, name)
+        extracted = _load_extracted(extracted_dir, name)
         if extracted is None:
             skipped.append(name)
             continue
@@ -160,7 +165,7 @@ def main() -> None:
 
     if not all_rows:
         raise SystemExit(
-            f"No extracted snapshots found in {args.extracted_dir} for any of PRIORS' "
+            f"No extracted snapshots found in {extracted_dir} for any of PRIORS' "
             f"{len(PRIORS)} named objects. Run scripts/extract_object_params.py first."
         )
     if skipped:
@@ -190,26 +195,30 @@ def main() -> None:
     for r in categorical_summary:
         print(f"{r['field']:<20} {r['accuracy']:>9.1f}% {r['n']:>4}")
 
-    detail_path = args.results_dir / "extraction_accuracy_detail.csv"
+    detail_path = results_dir / "extraction_accuracy_detail.csv"
     with open(detail_path, "w", newline="") as f:
         writer = csv.DictWriter(f, fieldnames=_DETAIL_CSV_FIELDS)
         writer.writeheader()
         writer.writerows(all_rows)
     print(f"\nWrote {detail_path}")
 
-    summary_path = args.results_dir / "extraction_accuracy_summary.csv"
+    summary_path = results_dir / "extraction_accuracy_summary.csv"
     with open(summary_path, "w", newline="") as f:
         writer = csv.DictWriter(f, fieldnames=_SUMMARY_CSV_FIELDS)
         writer.writeheader()
         writer.writerows(summary)
     print(f"Wrote {summary_path}")
 
-    if args.plot:
+    if plot:
         from plot_rollout_results import plot_extraction_accuracy
 
-        plot_extraction_accuracy(
-            numeric_summary, categorical_summary, path=args.results_dir / "extraction_accuracy.png"
-        )
+        plot_extraction_accuracy(numeric_summary, categorical_summary, path=results_dir / "extraction_accuracy.png")
+
+
+def main() -> None:
+    setup_logging()
+    args = parse_args()
+    evaluate(args.extracted_dir, args.results_dir, args.plot)
 
 
 if __name__ == "__main__":

@@ -1,6 +1,10 @@
 #!/bin/bash
-# Stage 1: text prompt -> LLM -> ObjectParams, snapshotted to
-# src/configs/objects/<name>.json. CPU-only -- no GPU requested.
+# Stage 1 (+ 1.5): text prompt -> LLM -> ObjectParams, snapshotted to
+# src/configs/objects/<name>.json, immediately followed by the accuracy check
+# against the golden dataset (writes src/results/extraction_accuracy_*.csv,
+# +chart with PLOT=1). CPU-only -- no GPU requested. See
+# extract_object_params.py's own module docstring for the --no-evaluate escape
+# hatch if you want stage 1 without stage 1.5.
 #
 # Every backend (anthropic/openai/groq) needs outbound internet AND an API key --
 # many HPC compute nodes block outbound internet, so check with
@@ -16,7 +20,7 @@
 # Usage (from the repo root):
 #   sbatch --export=ALL,BACKEND=anthropic,MODEL=claude-haiku-4-5 src/slurm/extract_object_params.slurm
 #   sbatch --export=ALL,BACKEND=openai,MODEL=gpt-4o-mini src/slurm/extract_object_params.slurm
-#   sbatch --export=ALL,BACKEND=groq,MODEL=openai/gpt-oss-120b src/slurm/extract_object_params.slurm
+#   sbatch --export=ALL,BACKEND=groq,MODEL=openai/gpt-oss-120b,PLOT=1 src/slurm/extract_object_params.slurm
 
 #SBATCH --job-name=extract_params
 #SBATCH --partition=serial            # CSF3: single-core CPU queue, no GPU needed for this stage
@@ -37,5 +41,9 @@ MODEL_FLAG=()
 if [ -n "${MODEL:-}" ]; then
   MODEL_FLAG=(--model "$MODEL")
 fi
+PLOT_FLAG=()
+if [ -n "${PLOT:-}" ]; then
+  PLOT_FLAG=(--plot)
+fi
 
-python src/scripts/extract_object_params.py --backend "$BACKEND" "${MODEL_FLAG[@]}"
+python src/scripts/extract_object_params.py --backend "$BACKEND" "${MODEL_FLAG[@]}" "${PLOT_FLAG[@]}"

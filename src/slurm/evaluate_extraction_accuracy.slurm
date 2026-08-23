@@ -1,8 +1,11 @@
 #!/bin/bash
 # Stage 1.5: how accurate was the LLM's extraction against the golden (ground-truth)
-# dataset? Writes CSVs (+ optionally a chart) to src/results/ -- independent of any
-# training run, so this can run right after extraction. CPU-only, no GPU needed. See
-# evaluate_extraction_accuracy.py's own module docstring for details.
+# dataset? Writes CSVs (+ optionally a chart) to src/results/. CPU-only, no GPU needed.
+#
+# extract_object_params.slurm already runs this automatically right after extraction
+# -- only submit this separately to re-check/re-plot existing snapshots without
+# calling an LLM again (e.g. after hand-editing a snapshot, or just re-plotting with
+# PLOT=1). See evaluate_extraction_accuracy.py's own module docstring for details.
 #
 # Usage (from the repo root), after extract_object_params.slurm has produced the
 # snapshots this reads:

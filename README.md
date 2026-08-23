@@ -58,8 +58,8 @@ lang2grasp/
 │   │   └── rollout.py           # load-and-roll-out entrypoint
 │   ├── scripts/
 │   │   ├── check_gpu.py             # GPU hello-world
-│   │   ├── extract_object_params.py # stage 1: prompt -> LLM -> ObjectParams JSON
-│   │   ├── evaluate_extraction_accuracy.py # stage 1.5: extraction accuracy vs. golden dataset
+│   │   ├── extract_object_params.py # stage 1 (+1.5): prompt -> LLM -> ObjectParams JSON, then accuracy check
+│   │   ├── evaluate_extraction_accuracy.py # stage 1.5, standalone: re-check/re-plot without re-extracting
 │   │   ├── generate_width_mass_objects.py # stage 1 (analytic): the width/mass-matched 5-object set
 │   │   ├── train_object.py          # stage 2: train one object's SAC policy
 │   │   ├── train_all_objects.py     # stage 2: local sequential driver, all objects in a dir
@@ -127,21 +127,19 @@ environment variable, if one is already set, always wins over `.env`.
 
 ## Pipeline: prompt → SAC policy → Panda rollout
 
-Three stages plus an extraction accuracy check, each a separate script so they can run
-independently (extraction needs an LLM/network; training and rollout never do). The
-accuracy check (stage 1.5) only needs stage 1's output, so it runs right after
-extraction rather than waiting on training/rollout:
+Three stages, each a separate script so they can run independently (extraction needs
+an LLM/network; training and rollout never do). Stage 1 folds in an accuracy check
+against the golden dataset (formerly a separate "stage 1.5") right after extraction,
+since it only needs stage 1's own output and there's no reason to wait on training/
+rollout to see it:
 
 ```bash
-# 1. Prompt -> LLM -> physical parameters, snapshotted to src/configs/objects/<name>.json.
-#    --backend is required: anthropic/openai/groq all call a real LLM.
-PYTHONPATH=src python src/scripts/extract_object_params.py --backend groq
-
-# 1.5. How accurate was that extraction against the golden (ground-truth) dataset?
-#      Independent of any training run -- can run right after stage 1, before stage 2.
-#      Always writes src/results/extraction_accuracy_{detail,summary}.csv; --plot adds
-#      src/results/extraction_accuracy.png.
-PYTHONPATH=src python src/scripts/evaluate_extraction_accuracy.py --plot
+# 1. Prompt -> LLM -> physical parameters, snapshotted to src/configs/objects/<name>.json,
+#    immediately followed by an accuracy check against the golden (ground-truth) dataset.
+#    --backend is required: anthropic/openai/groq all call a real LLM. Always writes
+#    src/results/extraction_accuracy_{detail,summary}.csv; --plot adds
+#    src/results/extraction_accuracy.png. --no-evaluate skips the accuracy check.
+PYTHONPATH=src python src/scripts/extract_object_params.py --backend groq --plot
 
 # 2. Train one SAC policy per object. Locally, sequentially:
 PYTHONPATH=src python src/scripts/train_all_objects.py --base-config src/configs/policy/sac.json
@@ -355,16 +353,17 @@ sbatch src/slurm/check_gpu.slurm         # gate 1: "hello world from cuda:0 ... 
 sbatch src/slurm/smoke_test.slurm        # gate 2: "SMOKE TEST PASSED"
 sbatch src/slurm/force_sensor_test.slurm # gate 3: "FORCE SENSOR TEST PASSED"
 
-# Stage 1: prompt -> LLM -> ObjectParams JSON. BACKEND is required -- see
+# Stage 1 (+ 1.5): prompt -> LLM -> ObjectParams JSON, immediately followed by the
+# accuracy check against the golden dataset. BACKEND is required -- see
 # extract_object_params.slurm's own header for the network-access caveat.
 sbatch --export=ALL,BACKEND=groq src/slurm/extract_object_params.slurm
+sbatch --export=ALL,BACKEND=groq,PLOT=1 src/slurm/extract_object_params.slurm   # + accuracy chart
 # Width/mass-matched set (analytic, no LLM/network involved -- cheap enough to just
 # run directly on the login node instead of via sbatch):
 PYTHONPATH=src python src/scripts/generate_width_mass_objects.py
 
-# Stage 1.5: how accurate was the extraction against the golden dataset? Reads the
-# snapshots extract_object_params.slurm just wrote; independent of any training run,
-# so it runs right after extraction and doesn't need to wait for rollout.
+# Stage 1.5 standalone: re-check/re-plot existing snapshots without calling an LLM
+# again (extract_object_params.slurm above already runs this once automatically).
 sbatch src/slurm/evaluate_extraction_accuracy.slurm
 sbatch --export=ALL,PLOT=1 src/slurm/evaluate_extraction_accuracy.slurm   # + accuracy chart
 
@@ -449,8 +448,8 @@ src/slurm/
   check_gpu.slurm              # gate 1: GPU/CUDA/torch sanity
   smoke_test.slurm             # gate 2: check_env + 3k-step train + save/load round-trip + rollout
   force_sensor_test.slurm      # gate 3: fingertip force sensor + crush + width_mass_set (CPU-only)
-  extract_object_params.slurm  # stage 1: prompt -> LLM -> configs/objects/<name>.json
-  evaluate_extraction_accuracy.slurm # stage 1.5: extraction accuracy vs. golden dataset, into results/
+  extract_object_params.slurm  # stage 1 (+1.5): prompt -> LLM -> configs/objects/<name>.json, then accuracy check
+  evaluate_extraction_accuracy.slurm # stage 1.5, standalone: re-check/re-plot into results/ without re-extracting
   train.slurm                  # stage 2: one run -- baseline cube, or OBJECT=<snapshot.json>
   train_objects_array.slurm    # stage 2: all objects in OBJECTS_DIR as parallel array tasks
   train_paradigm.slurm         # stage 2, paradigm switch: one VARIANT=blind|blind_hist|param run
