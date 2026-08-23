@@ -46,7 +46,7 @@ lang2grasp/
 │   │   ├── lift_object_task.py  # ParamLift: Lift with the cube replaced by an ObjectParams object
 │   │   └── force_gripper.py     # PandaGripperForce: adds a real per-fingertip MuJoCo force sensor
 │   ├── extraction/
-│   │   ├── llm_backends.py      # Mock / Anthropic / OpenAI / Groq extraction backends
+│   │   ├── llm_backends.py      # Anthropic / OpenAI / Groq extraction backends
 │   │   ├── param_prompts.py     # extraction prompt, JSON schema, offline priors
 │   │   └── param_extraction.py  # prompt -> validated ObjectParams, with one retry
 │   ├── rl/
@@ -111,8 +111,8 @@ rebuild the env against the new CUDA version if it changed) to match.
 None of this requires a Slurm cluster -- everything below also runs with plain
 `python` on a laptop with a GPU (or CPU, just slower).
 
-**LLM API keys** (only needed for `extract_object_params.py --backend
-anthropic/openai/groq` -- skip this for `--backend mock`, the default):
+**LLM API keys** (`extract_object_params.py --backend` is required -- `anthropic`,
+`openai`, and `groq` all need a key):
 
 ```bash
 cp .env.example .env
@@ -134,14 +134,13 @@ extraction rather than waiting on training/rollout:
 
 ```bash
 # 1. Prompt -> LLM -> physical parameters, snapshotted to src/configs/objects/<name>.json.
-#    --backend mock is offline/deterministic (no API key); anthropic/openai/groq call a real LLM.
-PYTHONPATH=src python src/scripts/extract_object_params.py --backend mock
+#    --backend is required: anthropic/openai/groq all call a real LLM.
+PYTHONPATH=src python src/scripts/extract_object_params.py --backend groq
 
 # 1.5. How accurate was that extraction against the golden (ground-truth) dataset?
 #      Independent of any training run -- can run right after stage 1, before stage 2.
 #      Always writes src/results/extraction_accuracy_{detail,summary}.csv; --plot adds
-#      src/results/extraction_accuracy.png. --backend mock above trivially scores 0
-#      error (MockBackend echoes PRIORS back) -- use a real backend to measure anything.
+#      src/results/extraction_accuracy.png.
 PYTHONPATH=src python src/scripts/evaluate_extraction_accuracy.py --plot
 
 # 2. Train one SAC policy per object. Locally, sequentially:
@@ -229,12 +228,7 @@ i.e. the policy is trained against its (possibly wrong) *belief* about the objec
 while what it's actually lifting (and how much it actually masses/how it actually
 slides) is the golden object. Objects with no golden entry (e.g. `width_mass_set`,
 generated analytically rather than extracted) keep the old coupled behaviour
-(`extracted_object=None`, so perception falls back to `object`). Note that
-`MockBackend` (the `--backend mock` default) returns `PRIORS` verbatim as its
-"extracted" fields, so with the mock backend golden and extracted are always
-identical and this split is a no-op — it only does something once
-`extract_object_params.py --backend anthropic/openai/groq` produces values that
-actually diverge from `PRIORS`. `ParamLift`
+(`extracted_object=None`, so perception falls back to `object`). `ParamLift`
 (`src/objects/lift_object_task.py`) is a `robosuite.Lift` subclass whose `_load_model`
 builds the object from `shape`/`size`/`density`/`friction` instead of the stock red
 cube — every other `Lift` method (`reward`, `_check_success`, ...) references
@@ -361,9 +355,9 @@ sbatch src/slurm/check_gpu.slurm         # gate 1: "hello world from cuda:0 ... 
 sbatch src/slurm/smoke_test.slurm        # gate 2: "SMOKE TEST PASSED"
 sbatch src/slurm/force_sensor_test.slurm # gate 3: "FORCE SENSOR TEST PASSED"
 
-# Stage 1: prompt -> LLM -> ObjectParams JSON. See extract_object_params.slurm's own
-# header for the network-access caveat with real (non-mock) backends.
-sbatch src/slurm/extract_object_params.slurm
+# Stage 1: prompt -> LLM -> ObjectParams JSON. BACKEND is required -- see
+# extract_object_params.slurm's own header for the network-access caveat.
+sbatch --export=ALL,BACKEND=groq src/slurm/extract_object_params.slurm
 # Width/mass-matched set (analytic, no LLM/network involved -- cheap enough to just
 # run directly on the login node instead of via sbatch):
 PYTHONPATH=src python src/scripts/generate_width_mass_objects.py

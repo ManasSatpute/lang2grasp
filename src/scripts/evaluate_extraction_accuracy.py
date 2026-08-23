@@ -3,9 +3,7 @@
 Compares `extract_object_params.py`'s per-object snapshots against
 `extraction.param_prompts.PRIORS` (the ground-truth values for the same 6 objects):
 categorical fields (`shape`, `mass_class`, `fragile`) as a match rate; numeric fields
-as mean absolute and relative error. `--backend mock` (extract_object_params.py's
-default) echoes PRIORS verbatim, so it always scores 0 error -- run a real backend
-first to measure anything meaningful.
+as mean absolute and relative error.
 
 Usage (from the repo root):
     PYTHONPATH=src python src/scripts/extract_object_params.py --backend anthropic

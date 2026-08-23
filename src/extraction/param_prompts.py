@@ -15,8 +15,6 @@ than six near-identical boxes:
 
 from __future__ import annotations
 
-import re
-
 from objects.object_params import ObjectParams
 
 #: robosuite/MuJoCo units throughout: metres, kg/m^3 density, Newtons.
@@ -95,8 +93,9 @@ JSON_SCHEMA = {
     "additionalProperties": False,
 }
 
-#: name -> raw fields dict, matching JSON_SCHEMA. Ground-truth-ish priors for
-#: MockBackend, the offline/deterministic default extraction backend.
+#: name -> raw fields dict, matching JSON_SCHEMA. Ground-truth values for the 6
+#: named objects, used as the golden physics (see golden_object_params below) and
+#: as the accuracy baseline in evaluate_extraction_accuracy.py.
 PRIORS: dict[str, dict] = {
     "glass_bottle": {
         "shape": "cylinder",
@@ -178,53 +177,10 @@ PRIORS: dict[str, dict] = {
     },
 }
 
-#: shape hint keywords for the generic fallback (unrecognised object names).
-_SHAPE_KEYWORDS: dict[str, tuple[str, ...]] = {
-    "ball": ("ball", "sphere", "orb", "marble", "egg"),
-    "cylinder": ("can", "bottle", "cylinder", "tube", "cup", "mug", "jar", "roll", "bolt"),
-}
-
-
-def prior_for(prompt: str) -> tuple[str, dict]:
-    """Match ``prompt`` against known objects, or fall back to a shape-keyword guess.
-
-    Returns ``(matched_key, fields)`` where ``fields`` is a raw dict matching
-    :data:`JSON_SCHEMA` -- the same shape :class:`ParamBackend.extract` returns.
-    """
-    text = prompt.lower()
-    for key, fields in PRIORS.items():
-        # Match on constituent words rather than the exact phrase, so "a small
-        # glass bottle of wine" still matches the "glass_bottle" prior.
-        words = key.split("_")
-        if all(re.search(rf"\b{re.escape(w)}\b", text) for w in words):
-            return key, dict(fields)
-
-    shape = "box"
-    for candidate_shape, keywords in _SHAPE_KEYWORDS.items():
-        if any(re.search(rf"\b{kw}\b", text) for kw in keywords):
-            shape = candidate_shape
-            break
-
-    size = {"box": (0.03, 0.03, 0.03), "cylinder": (0.03, 0.05), "ball": (0.03,)}[shape]
-    return "generic", {
-        "shape": shape,
-        "size": list(size),
-        "density": 1000.0,
-        "friction": [0.5, 0.005, 0.0001],
-        "mass_class": "medium",
-        "fragile": False,
-        "grip_force_min_N": 5.0,
-        "grip_force_max_N": 30.0,
-        "rgba": [0.5, 0.5, 0.5, 1.0],
-        "spring_Npm": 1000.0,
-        "crush_force_N": 50.0,
-    }
-
-
 def golden_object_params(name: str) -> ObjectParams | None:
     """The ground-truth :class:`ObjectParams` for one of the 6 named objects in
-    ``PRIORS`` (exact lookup, not fuzzy-matched like :func:`prior_for`), or ``None``
-    if ``name`` has no golden entry. See ``rl.env.EnvConfig.extracted_object``.
+    ``PRIORS``, or ``None`` if ``name`` has no golden entry. See
+    ``rl.env.EnvConfig.extracted_object``.
     """
     fields = PRIORS.get(name)
     return ObjectParams(name=name, **fields) if fields is not None else None

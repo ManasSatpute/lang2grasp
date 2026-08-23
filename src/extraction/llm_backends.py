@@ -3,12 +3,12 @@
 Every backend returns a plain ``dict`` matching :class:`objects.object_params.
 ObjectParams`'s fields; validation and clamping happen once, in
 ``ObjectParams.__post_init__``, not here. SDKs are imported lazily inside each
-backend's ``__init__`` so ``requirements.txt`` doesn't hard-depend on any of them --
-``MockBackend`` needs none and is the default for tests, CI, and offline runs.
+backend's ``__init__`` so ``requirements.txt`` doesn't hard-depend on any of them
+that isn't actually in use.
 
-Each real backend reads its API key from the environment. Importing this module
-loads a repo-root ``.env`` file first (see ``.env.example``); a real env var still
-takes precedence if both are set.
+Each backend reads its API key from the environment. Importing this module loads
+a repo-root ``.env`` file first (see ``.env.example``); a real env var still takes
+precedence if both are set.
 """
 
 from __future__ import annotations
@@ -16,7 +16,7 @@ from __future__ import annotations
 import json
 import re
 
-from extraction.param_prompts import JSON_SCHEMA, SYSTEM_PROMPT, prior_for
+from extraction.param_prompts import JSON_SCHEMA, SYSTEM_PROMPT
 
 try:
     from dotenv import load_dotenv
@@ -30,17 +30,6 @@ class ParamBackend:
     def extract(self, prompt: str) -> dict:
         """Return raw JSON fields for an object described by ``prompt``."""
         raise NotImplementedError
-
-
-class MockBackend(ParamBackend):
-    """Deterministic, offline stand-in. Keyword-matches ``prompt`` against a
-    small table of plausible priors -- no API key, no network, fully
-    reproducible. Default backend for tests and SLURM smoke runs.
-    """
-
-    def extract(self, prompt: str) -> dict:
-        _, fields = prior_for(prompt)
-        return fields
 
 
 class AnthropicBackend(ParamBackend):
@@ -96,7 +85,7 @@ class GroqBackend(ParamBackend):
     instead of relying on server-side schema enforcement.
     """
 
-    def __init__(self, model: str = "llama-3.3-70b-versatile") -> None:
+    def __init__(self, model: str = "openai/gpt-oss-120b") -> None:
         from groq import Groq
 
         self.client = Groq()
@@ -124,7 +113,6 @@ class GroqBackend(ParamBackend):
 
 
 BACKENDS: dict[str, type[ParamBackend]] = {
-    "mock": MockBackend,
     "anthropic": AnthropicBackend,
     "openai": OpenAIBackend,
     "groq": GroqBackend,
