@@ -1,19 +1,13 @@
 #!/bin/bash
 # Stage 2, paradigm switch: train one of pi_blind / pi_blind+hist / pi_param against a
 # continuous distribution of objects (scripts/train_paradigm.py) -- see the root
-# README's "Paradigm switch: domain randomization vs. per-object specialists". Same
-# requeue mechanism as train.slurm -- see that file's header comment for the two
-# SLURM-side halves (signal forwarding, exit-code-42 requeue).
+# README's "Paradigm switch" section. Same requeue mechanism as train.slurm.
 #
 # VARIANT is required (blind | blind_hist | param). RUN_NAME is derived from
-# VARIANT+SEED, not the job ID, so a resubmission (e.g. after a wall-clock cutoff
-# beyond what the in-job requeue already handles) resumes the same run dir via
-# --resume, same as train.slurm's OBJECT-set branch.
+# VARIANT+SEED, not the job ID, so a resubmission resumes the same run dir.
 #
-# TOTAL_TIMESTEPS is for smoke-checking this pipeline on real cluster hardware before
-# committing to a full run -- pair it with a short --time on the sbatch command line
-# (see Usage). There's no dedicated tests/train_paradigm smoke script the way
-# tests/smoke_test.py covers the baseline: this *is* the smoke check for this path.
+# TOTAL_TIMESTEPS is for smoke-checking this pipeline on real hardware before
+# committing to a full run -- pair it with a short --time on the sbatch command line.
 #
 # Usage (from the repo root):
 #   # Quick smoke check on real hardware before a long run (~2 min):

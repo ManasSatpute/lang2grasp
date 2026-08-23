@@ -1,14 +1,10 @@
 """Compare a generic (no-extracted-params) policy against the per-object pipeline.
 
-The "generic" arm is a single SAC policy trained once with `EnvConfig.object` unset
-(the existing baseline path -- no `--object` flag, e.g.
-`python -m rl.train --config src/configs/policy/sac.json --run-name lift_baseline`).
-It never sees any object's extracted shape/size/density/friction, and its reward
-never uses grip-force parameters either (`grip_force_shaping` requires `object` to be
-set). This script rolls that one policy out against each LLM-described object's
-*actual* physics (`rl.rollout.rollout`'s `object_override`) and compares it, object by
-object, against that object's own dedicated policy from `scripts/train_object.py` /
-`scripts/train_all_objects.py`.
+The "generic" arm is a single SAC policy trained once with `EnvConfig.object` unset,
+so it never sees any object's extracted parameters. This script rolls that one policy
+out against each LLM-described object's actual physics (`rl.rollout.rollout`'s
+`object_override`) and compares it, object by object, against that object's own
+dedicated policy from `scripts/train_object.py`.
 
 Usage (from the repo root):
     PYTHONPATH=src python -m rl.train --config src/configs/policy/sac.json --run-name lift_baseline

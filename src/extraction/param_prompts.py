@@ -223,16 +223,8 @@ def prior_for(prompt: str) -> tuple[str, dict]:
 
 def golden_object_params(name: str) -> ObjectParams | None:
     """The ground-truth :class:`ObjectParams` for one of the 6 named objects in
-    ``PRIORS``, or ``None`` if ``name`` has no golden entry (e.g. a
-    ``width_mass_set`` object or an unrecognised/``"generic"`` name -- those are
-    analytically generated or keyword-guessed, not looked up here).
-
-    Looks up ``name`` directly in ``PRIORS`` (unlike :func:`prior_for`, which
-    fuzzy-matches a free-text prompt) -- a caller here already knows which named
-    object it wants. Used to load the *physical* simulated object from real,
-    trusted values, decoupled from a separately (and possibly imperfectly)
-    extracted :class:`ObjectParams` the policy is conditioned/rewarded on -- see
-    ``rl.env.EnvConfig.extracted_object``.
+    ``PRIORS`` (exact lookup, not fuzzy-matched like :func:`prior_for`), or ``None``
+    if ``name`` has no golden entry. See ``rl.env.EnvConfig.extracted_object``.
     """
     fields = PRIORS.get(name)
     return ObjectParams(name=name, **fields) if fields is not None else None

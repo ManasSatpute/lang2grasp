@@ -110,14 +110,9 @@ def load_config(path: str | Path, overrides: dict[str, Any] | None = None) -> Tr
 
 
 def _json_default(obj: Any) -> str:
-    """`json.dumps`'s fallback for a `TrainConfig` field `dataclasses.asdict` can't
-    turn into plain JSON on its own -- e.g. `scripts/train_paradigm.py` puts a live
-    `features_extractor_class` (an actual class, not a string) in `policy_kwargs`.
-    The snapshot only needs to be human-readable/reproducible-by-inspection here;
-    nothing reloads a class back out of it -- resuming reloads the whole policy from
-    the SB3 checkpoint archive instead (see `train._build_model`), not from this
-    snapshot's `policy_kwargs`.
-    """
+    """`json.dumps` fallback for values `dataclasses.asdict` can't serialise directly,
+    e.g. a live class in `policy_kwargs`. Human-readable only; resuming reloads the
+    policy from the SB3 checkpoint archive, not from this snapshot."""
     return getattr(obj, "__qualname__", None) or str(obj)
 
 

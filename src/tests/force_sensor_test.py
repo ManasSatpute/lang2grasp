@@ -1,25 +1,18 @@
 #!/usr/bin/env python3
-"""End-to-end check for the genuine fingertip force sensor (Phase 1: "make fragility
-real" -- see rl/env.py's module docstring and objects/force_gripper.py).
+"""End-to-end check for the genuine fingertip force sensor (see rl/env.py's module
+docstring and objects/force_gripper.py). Proves four things:
 
-Proves four things, each a plausible way the sensor wiring could be silently wrong:
+  [1] `fingertip_force` is part of the observation for the generic baseline too.
+  [2] The reading is a genuine sensor value that changes once a scripted grasp
+      actually makes contact, not a constant.
+  [3] Crushing is real: a low crush_force_N terminates the episode with a reward
+      penalty.
+  [4] The width/mass-matched object generator reproduces its target width_mm/mass_g.
+  [5] Crushing is *only* the gripper on the object: force from anything else (a pad
+      pressed into the tabletop) never terminates the episode, however low
+      crush_force_N is.
 
-  [1] `fingertip_force` is part of the observation for the generic baseline too
-      (env.object=None) -- not just object-conditioned runs. obs_dim is exactly 6
-      larger than the two robosuite-native keys alone.
-  [2] The reading is a genuine sensor value, not a constant: it changes once a
-      scripted grasp (rl/scripted_policy.ScriptedPickPolicy) actually makes contact,
-      as opposed to sitting at its at-rest value all episode.
-  [3] Crushing is real: an object whose crush_force_N is set far below what contact
-      actually produces terminates the episode (info["crushed"]=True, terminated=True)
-      with a reward that includes a negative crush penalty term.
-  [4] The width-matched/mass-matched object generator
-      (scripts/generate_width_mass_objects.py) produces ObjectParams that reproduce
-      their target width_mm/mass_g (no clamp distorted them).
-
-Needs a real robosuite/mujoco install (this project's primary dependency) -- unlike
-smoke_test.py, it does NOT need stable-baselines3/torch or rl.train's SLURM-signal
-handling, so it also runs somewhere with just the sim stack installed.
+Needs a real robosuite/mujoco install, but not stable-baselines3/torch.
 
 Usage (from the repo root):
     PYTHONPATH=src python src/tests/force_sensor_test.py
@@ -101,6 +94,9 @@ def assert_force_reading_is_genuine() -> None:
             "fingertip_force never changed across the episode -- looks like a "
             "constant/stub reading, not a real sensor"
         )
+        # A real lift check: ParamLift._check_success measures height against the
+        # object's *own* resting height, so this no longer passes for free on an object
+        # (like this 45mm-half-height cylinder) that is taller than robosuite's stock cube.
         assert info.get("is_success"), f"scripted grasp did not succeed against {params.name}: {info}"
     finally:
         env.close()
@@ -166,6 +162,67 @@ def assert_crush_terminates() -> None:
     )
 
 
+def assert_crush_ignores_non_object_contact() -> None:
+    """[5] Force that isn't the gripper squeezing the object -- here, the closed pads
+    pressed into the tabletop away from it -- must never register as a crush, however
+    low crush_force_N is.
+
+    This is the regression that pinned `eval/success_rate` at 0 for every per-object
+    run: the crush check read the raw fingertip sensor with no contact gate, so with a
+    `crush_force_N` of 5-12N (every fragile object, and all of width_mass_set at 10N) a
+    table bump during the reach phase terminated the episode after a handful of steps
+    and training never got near a grasp.
+    """
+    base = ObjectParams(**json.loads(_WIDTH_MASS_OBJECT.read_text()))
+    fragile = dataclasses.replace(base, crush_force_N=0.1)  # ObjectParams' own clamp floor
+    env = RobosuiteLiftEnv(EnvConfig(horizon=200, object=fragile))
+    try:
+        env.reset()
+        action_dim = env.action_space.shape[0]
+        max_off_object_force_N = 0.0
+        for step in range(120):
+            action = np.zeros(action_dim, dtype=np.float64)
+            if step < 30:
+                action[1] = 0.5  # translate clear of the cube's placement region
+            else:
+                action[2] = -1.0  # then drive the closed pads down into the tabletop
+            action[-1] = 1.0  # gripper closed throughout
+            _, _, terminated, truncated, info = env.step(action)
+
+            # Same post-step sim state env.step() itself read, so this is exactly the
+            # contact the crush check saw.
+            if any(env._pads_touching_object()):
+                continue  # a genuine gripper/object contact -- not what this test covers
+            raw_N = info["fingertip_force_raw_N"]
+            max_off_object_force_N = max(max_off_object_force_N, raw_N)
+            assert not info["crushed"], (
+                f"step {step}: episode terminated as crushed with neither pad on the "
+                f"object (raw fingertip force {raw_N:.3f}N) -- the crush check is "
+                "reading non-object contact again"
+            )
+            assert info["fingertip_force_N"] == 0.0, (
+                f"step {step}: fingertip_force_N was {info['fingertip_force_N']:.3f}N "
+                f"with neither pad on the object; only force through a pad actually "
+                "touching the object counts as grip force"
+            )
+            if terminated or truncated:
+                break
+    finally:
+        env.close()
+
+    assert max_off_object_force_N > fragile.crush_force_N, (
+        f"never generated off-object fingertip force above crush_force_N "
+        f"({max_off_object_force_N:.3f}N vs {fragile.crush_force_N}N), so this test "
+        "never exercised the gate -- the arm probably didn't reach the tabletop"
+    )
+    LOGGER.info(
+        "[5] OK: %.3fN of off-object fingertip force (>> crush_force_N=%.1fN) never "
+        "counted as a crush.",
+        max_off_object_force_N,
+        fragile.crush_force_N,
+    )
+
+
 def assert_width_mass_set_is_accurate() -> None:
     """[4] generate_width_mass_objects.py's outputs reproduce their target width/mass."""
     for params in generate_objects():
@@ -181,6 +238,7 @@ def main() -> int:
     assert_baseline_obs_includes_force()
     assert_force_reading_is_genuine()
     assert_crush_terminates()
+    assert_crush_ignores_non_object_contact()
     assert_width_mass_set_is_accurate()
     LOGGER.info("FORCE SENSOR TEST PASSED")
     return 0

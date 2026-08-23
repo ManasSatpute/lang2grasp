@@ -1,19 +1,14 @@
 """A ``robosuite.Lift`` variant whose liftable object is built from :class:`ObjectParams`.
 
-robosuite's ``Lift._load_model`` hardcodes ``self.cube = BoxObject(...)`` with no
-constructor hook to swap it -- confirmed against the installed robosuite 1.5.1 source
-(``robosuite/environments/manipulation/lift.py``). Every other ``Lift`` method
-(``reward``, ``_check_success``, ``_setup_observables``, ``visualize``,
-``_reset_internal``) references ``self.cube`` generically, so the only method that
-needs overriding is ``_load_model`` -- and that means **vendoring its body**, since
-there's no smaller extension point. This is pinned to the ``robosuite<1.6`` requirement
-in ``requirements.txt``; re-diff this method against ``Lift._load_model`` before
-raising that pin (same spirit as ``env.py``'s ``resolve_controller_config`` handling the
-1.4/1.5 controller-config API split).
+robosuite's ``Lift._load_model`` hardcodes the cube with no hook to swap it, so
+``_load_model`` below is a vendored copy with only the object construction changed.
+Every other ``Lift`` method references ``self.cube`` generically -- except
+``_check_success``, whose height threshold is calibrated for the stock 4cm cube and is
+overridden here (see :meth:`ParamLift._check_success`). Pinned to ``robosuite<1.6`` in
+``requirements.txt`` -- re-diff both methods against ``Lift`` before raising that pin.
 
-robosuite auto-registers any subclass of its env base class by class name (see
-``robosuite.environments.base.EnvMeta``), so importing this module is enough to make
-``suite.make("ParamLift", ...)`` resolve -- no manual registry call needed.
+robosuite auto-registers any subclass of its env base class by class name, so
+importing this module is enough to make ``suite.make("ParamLift", ...)`` resolve.
 """
 
 from __future__ import annotations
@@ -29,6 +24,25 @@ from robosuite.utils.placement_samplers import UniformRandomSampler
 from objects.object_params import ObjectParams
 
 _BUILDERS = {"box": BoxObject, "cylinder": CylinderObject, "ball": BallObject}
+
+#: How far above its own resting height the object must rise to count as lifted (m).
+#: robosuite's `Lift` hardcodes an *absolute* `table_z + 0.04`, which only reads as
+#: "lift by 2cm" for its stock cube (half-extent 0.02). 0.02 here reproduces that
+#: difficulty exactly for the stock cube while staying meaningful for every other size.
+LIFT_MARGIN_M = 0.02
+
+
+def resting_center_height(params: ObjectParams) -> float:
+    """Height (m) of the object's body centre above the table when it sits at rest.
+
+    Equal to its half-extent along z: `size[2]` for a box, `size[1]` (half-height) for
+    an upright cylinder, `size[0]` (radius) for a ball.
+    """
+    if params.shape == "box":
+        return params.size[2]
+    if params.shape == "cylinder":
+        return params.size[1]
+    return params.size[0]  # ball
 
 #: Either a fixed object (the per-object-specialist path) or a zero-arg callable
 #: drawing a fresh one (the domain-randomization path, e.g.
@@ -56,13 +70,10 @@ class ParamLift(Lift):
     """``Lift`` with the cube replaced by an object built from ``object_params``.
 
     When ``object_params`` is a callable, ``_load_model`` re-invokes it every call --
-    i.e. every episode when the env is built with ``hard_reset=True`` (see
-    ``rl/env.py``'s ``EnvConfig.randomize_object``), so each episode gets a fresh
-    sample from a continuous distribution instead of one fixed object baked in at
-    construction. ``self.object_params`` always reflects whichever instance is
-    *currently* loaded, fixed or freshly sampled -- callers (e.g. ``rl/env.py``, to
-    build this episode's z-vector or resolve its crush-force threshold) read it back
-    after ``reset()``, not the constructor argument.
+    e.g. one fresh sample per episode for domain randomization (``EnvConfig.
+    randomize_object`` in ``rl/env.py``). ``self.object_params`` always reflects
+    whichever instance is currently loaded; callers should read it back after
+    ``reset()``, not the constructor argument.
     """
 
     def __init__(self, *args, object_params: ObjectParamsSource, **kwargs) -> None:
@@ -71,10 +82,8 @@ class ParamLift(Lift):
         super().__init__(*args, **kwargs)
 
     def _load_model(self) -> None:
-        # Vendored from Lift._load_model (robosuite 1.5.1): identical arena setup,
-        # only the cube construction differs. `super(Lift, self)` -- not `super()` --
-        # skips straight to Lift's parent, since Lift's own _load_model is exactly
-        # what we're replacing.
+        # `super(Lift, self)` skips straight to Lift's parent, since Lift's own
+        # _load_model is exactly what this method replaces.
         super(Lift, self)._load_model()
 
         if callable(self._object_params_source):
@@ -115,3 +124,19 @@ class ParamLift(Lift):
             mujoco_robots=[robot.robot_model for robot in self.robots],
             mujoco_objects=self.cube,
         )
+
+    def _check_success(self) -> bool:
+        """Has the object been lifted clear of the table?
+
+        ``Lift._check_success`` tests ``body_z > table_z + 0.04``, an absolute threshold
+        calibrated for its stock 4cm cube. Applied to an arbitrary ``ObjectParams`` it
+        breaks both ways: anything taller than 8cm (a 18cm ``glass_bottle``, a 9cm
+        ``ceramic_mug``, four of the five ``width_mass_set`` cylinders) already satisfies
+        it sitting *untouched* on the table, while a short object has to be lifted
+        further than the cube did. Measure the lift relative to the object's own resting
+        height instead, so "lifted" means the same thing for every object.
+        """
+        object_height = self.sim.data.body_xpos[self.cube_body_id][2]
+        table_height = self.model.mujoco_arena.table_offset[2]
+        resting_height = resting_center_height(self.object_params)
+        return bool(object_height > table_height + resting_height + LIFT_MARGIN_M)

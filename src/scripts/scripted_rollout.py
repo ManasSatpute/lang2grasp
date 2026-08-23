@@ -1,12 +1,7 @@
 """Roll out the scripted (non-learned) pick heuristic directly -- no SAC, no training,
-no ``ObjectParams``. Useful to check whether a plain reach/descend/grasp/lift controller
-can lift the cube on its own, independent of whatever the RL policy is or isn't
-learning under the sparse/"fixed" reward (see ``rl/sparse_seed.py``, README.md's "The
-sparse default reward" section).
-
-Metrics reported match ``rl.rollout.rollout``'s: ``success_rate`` is the cube held at
-the terminal step, ``success_ever`` is the cube lifted at any point (always >= the
-former; a policy that grasps and drops scores 1.0 there, 0.0 here).
+no ``ObjectParams``. Useful to check whether a plain reach/descend/grasp/lift
+controller can lift the cube on its own, independent of the RL policy (see
+``rl/sparse_seed.py``). Metrics reported match ``rl.rollout.rollout``'s.
 
 Usage (from the repo root):
     PYTHONPATH=src python src/scripts/scripted_rollout.py --episodes 20

@@ -1,25 +1,11 @@
 """Stage 3: roll every trained per-object policy out against the Panda arm in
 robosuite/MuJoCo, and print a per-object success-rate table.
 
-For a single run, `python -m rl.rollout --run-dir ...` still works
-unchanged -- this script just loops that same `rollout()` over every trained
-object's run directory.
-
-Each run's `config.json` snapshot already carries the resolved `env.object`
-(None for the stock-cube baseline, an `ObjectParams` dict for every
-LLM-described object) -- read straight from that instead of re-reading
-`src/configs/objects/*.json`, so the table reflects what a run actually
-trained against even if the source snapshot has since changed. `mass_g` /
-`rest_width_mm` are pulled in to make the mass/size-vs-success relationship
-the array run is meant to surface directly readable, without a separate
-analysis pass.
-
-Besides the console table, this always writes a CSV of the full metric set
-(`--results-dir`, default `src/results/`). `--plot` additionally saves a
-success-rate/return chart, and `--video` renders a short rollout video per
-object (its own short episode count, `--video-episodes`, independent of
-`--episodes` used for the stats, so a handful of objects doesn't turn into
-many minutes of footage).
+Loops `rl.rollout.rollout()` over every trained object's run directory, reading
+`env.object` from each run's own `config.json` snapshot so the table reflects what a
+run actually trained against. Always writes a CSV of the full metric set
+(`--results-dir`). `--plot` additionally saves a success-rate/return chart, and
+`--video` renders a short rollout video per object.
 
 Usage (from the repo root):
     PYTHONPATH=src python src/scripts/rollout_all_objects.py --runs-dir runs --episodes 20

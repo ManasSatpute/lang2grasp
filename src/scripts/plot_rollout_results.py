@@ -36,12 +36,8 @@ def plot_results(rows, path="rollout_success_rate.png"):
 
 def plot_extraction_accuracy(numeric_summary, categorical_summary, path="extraction_accuracy.png"):
     """Two-panel accuracy report for scripts/evaluate_extraction_accuracy.py: mean
-    relative error per numeric field (top, horizontal bars) and match rate per
-    categorical field (bottom). `numeric_summary`/`categorical_summary`: lists of
-    dicts from that script's `summarize()`, already sorted the way they should
-    appear top-to-bottom / left-to-right. Numeric fields with no defined
-    `mean_pct_error` (a near-zero golden denominator) are dropped from the top panel
-    -- see that script's module docstring."""
+    relative error per numeric field (top) and match rate per categorical field
+    (bottom). Numeric fields with no defined `mean_pct_error` are dropped."""
     plotted = [r for r in numeric_summary if r["mean_pct_error"] is not None]
     fields = [r["field"] for r in plotted]
     pct_errors = [r["mean_pct_error"] for r in plotted]

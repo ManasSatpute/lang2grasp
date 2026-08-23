@@ -3,15 +3,11 @@
 A thin wrapper around `rl.train.train` -- loads an `ObjectParams` snapshot (the
 *extracted* object, from `scripts/extract_object_params.py`), and, when a golden
 (ground-truth) entry exists for that name (`extraction.param_prompts.
-golden_object_params`), splits it in two: the golden object is what's physically
-built into the MuJoCo scene (`EnvConfig.object`), while the extracted object drives
-crush penalty/termination, the grip-force bonus, and `include_object_z`'s z-vector
-(`EnvConfig.extracted_object`) -- the policy is trained against its (possibly
-imperfect) belief about the object, not the real physics it's actually lifting. Falls
-back to the old coupled behaviour (extracted == physical) for names with no golden
-entry, e.g. `width_mass_set` objects. See `rl/env.py`'s module docstring, "Golden
-physics vs. extracted perception". Delegates to the exact same checkpoint/resume/
-requeue machinery `rl.train` already provides for the un-parameterised baseline.
+golden_object_params`), splits it in two: the golden object is what's physically built
+into the scene (`EnvConfig.object`), while the extracted object drives crush
+behaviour, the grip-force bonus, and the z-vector (`EnvConfig.extracted_object`). Falls
+back to the old coupled behaviour for names with no golden entry (e.g. `width_mass_set`
+objects). See `rl/env.py`'s module docstring, "Golden vs. extracted object".
 
 Usage (from the repo root):
     PYTHONPATH=src python src/scripts/train_object.py \\
@@ -50,11 +46,9 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--grip-force-shaping",
         action="store_true",
-        help="Enable EnvConfig.grip_force_shaping (off by default) -- adds a reward "
-        "bonus for holding within this object's grip_force_min_N/max_N window, using "
-        "the real fingertip force sensor. Crush penalty/termination (crush_force_N) "
-        "are unconditional whenever --object is set and are NOT controlled by this "
-        "flag -- see rl/env.py's module docstring.",
+        help="Enable EnvConfig.grip_force_shaping (off by default): a reward bonus "
+        "for holding within grip_force_min_N/max_N. Does not affect crush behaviour, "
+        "which is unconditional whenever --object is set.",
     )
     return parser.parse_args()
 

@@ -1,20 +1,11 @@
 """Replay-buffer seeding for the sparse/"fixed" reward config (``EnvConfig.reward_shaping=False``).
 
-With ``reward_shaping=False``, robosuite's ``Lift`` gives a fixed reward: 0.0 every
-step until the cube crosses the success height, then a constant positive value (see
-``EnvConfig.reward_shaping``'s docstring in ``rl/env.py`` and README.md's "The sparse
-default reward" section). A freshly-initialised SAC policy essentially never lifts a
-cube by chance with a 7-DoF arm, so the replay buffer fills with all-zero-reward
-transitions and the critic never sees a gradient -- hence the ~0% success rate.
-
-This module runs a scripted, non-learned reach -> descend -> grasp -> lift heuristic
-(``rl/scripted_policy.ScriptedPickPolicy``) against a throwaway single env to *find* a
-handful of real successes before training starts, and inserts their transitions
-directly into SAC's replay buffer so the critic has real reward signal to bootstrap
-from. It only ever runs when the caller (``rl/train.py``) checks
-``cfg.env.reward_shaping is False`` first -- the shaped (default) path never imports or
-calls this. For rolling the same heuristic out standalone (no SAC involved at all), see
-``scripts/scripted_rollout.py``.
+With a sparse reward, a freshly-initialised SAC policy essentially never lifts the
+cube by chance, so the replay buffer fills with all-zero-reward transitions and the
+critic never sees a gradient. This module runs a scripted reach/descend/grasp/lift
+heuristic (`rl/scripted_policy.ScriptedPickPolicy`) against a throwaway env to find a
+handful of real successes and inserts their transitions into SAC's replay buffer
+before training starts. Only called from `rl/train.py` when reward_shaping is False.
 """
 
 from __future__ import annotations

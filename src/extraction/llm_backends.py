@@ -1,22 +1,14 @@
 """LLM backends for turning a text prompt into raw object-parameter JSON.
 
-Every backend implements the same one-method interface and returns a plain
-``dict`` matching :class:`objects.object_params.ObjectParams`'s fields
-(``shape``, ``size``, ``density``, ``friction``, ``mass_class``, ``fragile``,
-``grip_force_min_N``, ``grip_force_max_N``, ``rgba``, ``spring_Npm``,
-``crush_force_N``) -- validation and clamping happen once, in
-``ObjectParams.__post_init__``, not here.
+Every backend returns a plain ``dict`` matching :class:`objects.object_params.
+ObjectParams`'s fields; validation and clamping happen once, in
+``ObjectParams.__post_init__``, not here. SDKs are imported lazily inside each
+backend's ``__init__`` so ``requirements.txt`` doesn't hard-depend on any of them --
+``MockBackend`` needs none and is the default for tests, CI, and offline runs.
 
-SDKs are imported lazily inside each backend's ``__init__`` so ``requirements.txt``
-doesn't have to hard-depend on any of them -- ``MockBackend`` needs none and
-is the default for tests, CI, and SLURM nodes with no API key or network.
-
-Each real backend's client (``Anthropic()``/``OpenAI()``/``Groq()``) reads its API
-key from the environment (``ANTHROPIC_API_KEY``/``OPENAI_API_KEY``/``GROQ_API_KEY``)
-on construction. Importing this module loads a repo-root ``.env`` file into the
-environment first (see ``.env.example``), so those variables can live in one
-gitignored file instead of being exported by hand every shell -- real shell/SLURM
-env vars still take precedence if both are set (``load_dotenv``'s default).
+Each real backend reads its API key from the environment. Importing this module
+loads a repo-root ``.env`` file first (see ``.env.example``); a real env var still
+takes precedence if both are set.
 """
 
 from __future__ import annotations

@@ -10,8 +10,7 @@ Usage (from the repo root):
     PYTHONPATH=src python -m rl.rollout --run-dir runs/lift_123 --episodes 10
     PYTHONPATH=src python -m rl.rollout --run-dir runs/lift_123 \
         --model eval/best_model.zip --video out.mp4
-    # Live MuJoCo viewer window (needs a display -- see src/slurm/rollout_vnc.slurm
-    # for watching this from a headless Slurm node via VNC):
+    # Live MuJoCo viewer window (needs a display):
     PYTHONPATH=src python -m rl.rollout --run-dir runs/lift_123 --render
 """
 
@@ -77,25 +76,11 @@ def rollout(
 ) -> dict[str, float]:
     """Roll the loaded policy out and return aggregate metrics.
 
-    ``model``/``cfg`` let a caller pass an already-loaded policy (via
-    :func:`load_policy`) instead of reloading it from ``run_dir`` -- useful when
-    rolling the same model out repeatedly, e.g. against several ``object_override``s.
-
-    ``object_override`` evaluates the policy against a *different* object's physics
-    than the one ``run_dir`` was trained on: the env is rebuilt from the run's own
-    ``cfg.env`` (matching horizon/controller/obs_keys/etc.) with only ``object``
-    replaced. Comparing a generically-trained policy (``run_dir``'s own ``env.object``
-    is ``None``) against each LLM-described object's real physics is the main use
-    case -- see `scripts/compare_policies.py`. If the run used
-    ``normalize_obs``/``normalize_reward``, its `VecNormalize` stats were fit on the
-    *original* object's dynamics, so they're a mismatch for the override; harmless for
-    the default config (`normalize_obs: false`), but worth knowing.
-
-    ``render`` opens robosuite's on-screen MuJoCo viewer (``render_mode="human"``)
-    and calls ``env.render()`` every step -- a live window, not a saved file.
-    Mutually exclusive with ``video_path`` (``rgb_array`` vs. ``human`` are different
-    ``render_mode``s). Needs a real or virtual display (``$DISPLAY``); on a headless
-    Slurm node, see ``src/slurm/rollout_vnc.slurm``.
+    ``model``/``cfg`` let a caller pass an already-loaded policy instead of reloading
+    it from ``run_dir``. ``object_override`` rolls the policy out against a different
+    object's physics than it was trained on (see ``scripts/compare_policies.py``).
+    ``render`` opens a live MuJoCo viewer window instead of saving a video; the two
+    are mutually exclusive and ``render`` needs a real or virtual display.
     """
     if render and video_path is not None:
         raise ValueError(
@@ -220,8 +205,7 @@ def parse_args() -> argparse.Namespace:
         "--render",
         action="store_true",
         help="Live MuJoCo viewer window (render_mode='human'). Needs a display; "
-        "mutually exclusive with --video. See src/slurm/rollout_vnc.slurm for a "
-        "headless Slurm node.",
+        "mutually exclusive with --video.",
     )
     return parser.parse_args()
 

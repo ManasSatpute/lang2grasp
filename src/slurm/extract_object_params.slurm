@@ -2,22 +2,15 @@
 # Stage 1: text prompt -> LLM -> ObjectParams, snapshotted to
 # src/configs/objects/<name>.json. CPU-only -- no GPU requested.
 #
-# --backend mock (the default here) is fully offline/deterministic and always
-# works as a batch job. Real backends (anthropic/openai/groq) need outbound
-# internet AND an API key in the environment -- many HPC compute nodes block
-# outbound internet entirely. Check this works before relying on it:
-#   srun --partition=serial --pty curl -sI https://api.anthropic.com
-# If that fails, run this stage on the login node instead (still just
-# `PYTHONPATH=src python src/scripts/extract_object_params.py --backend ...`,
-# no sbatch needed) and commit the resulting JSON snapshots -- training and
-# rollout never call an LLM, so only this one stage is network-sensitive.
+# --backend mock (the default here) is fully offline/deterministic. Real backends
+# (anthropic/openai/groq) need outbound internet AND an API key -- many HPC compute
+# nodes block outbound internet, so check with `curl -sI https://api.anthropic.com`
+# first, or run this stage on the login node instead. Training/rollout never call an
+# LLM, so only this stage is network-sensitive.
 #
-# API key: put it in a `.env` file at the repo root (copy `.env.example`,
-# gitignored) -- `extraction/llm_backends.py` loads it automatically via
-# python-dotenv, since `env.sh` cd's into SLURM_SUBMIT_DIR (the repo root) before
-# this runs. That avoids putting a real key on the `sbatch --export=` command
-# line, where it lands in shell history and `scontrol show job`. Passing it via
-# --export (below) still works and takes precedence over `.env` if both are set.
+# API key: put it in a `.env` file at the repo root (copy `.env.example`, gitignored)
+# -- `extraction/llm_backends.py` loads it automatically. Passing it via --export
+# (below) also works and takes precedence over `.env` if both are set.
 #
 # Usage (from the repo root):
 #   sbatch src/slurm/extract_object_params.slurm                                   # --backend mock

@@ -1,26 +1,11 @@
 """Stage 1.5: how accurate is LLM extraction against the golden (ground-truth) dataset?
 
-`extract_object_params.py` snapshots what a backend (mock/anthropic/openai/groq)
-guesses about each named object from its text prompt (`configs/objects/prompts.json`)
-to `configs/objects/<name>.json`. `extraction.param_prompts.PRIORS` is the
-ground-truth ("golden") values for those same 6 objects -- see `rl/env.py`'s
-`EnvConfig.extracted_object` split, which trains a policy against the extracted
-(possibly wrong) belief while the golden object is what's actually simulated. This
-script quantifies the gap between the two, independent of any training run:
+Compares `extract_object_params.py`'s per-object snapshots against
+`extraction.param_prompts.PRIORS` (the ground-truth values for the same 6 objects):
 categorical fields (`shape`, `mass_class`, `fragile`) as a match rate; numeric fields
-(`density`, `friction`, the grip-force window, `spring_Npm`, `crush_force_N`, plus the
-derived `mass_g`/`rest_width_mm`) as mean absolute and relative error.
-
-Friction's `torsional`/`rolling` components are tiny in absolute terms (golden values
-~0.0001-0.01) -- a small absolute miss there can read as a large relative error. Check
-`abs_error` alongside `pct_error` for those two before drawing conclusions from the
-percentage alone.
-
-With `--backend mock` (extract_object_params.py's default), MockBackend returns
-PRIORS verbatim, so every field will show exactly 0 error -- that confirms the
-comparison logic is wired correctly, but it is not a result. Run
-`extract_object_params.py --backend anthropic/openai/groq` first (needs that
-backend's SDK installed and an API key) to measure a real extraction.
+as mean absolute and relative error. `--backend mock` (extract_object_params.py's
+default) echoes PRIORS verbatim, so it always scores 0 error -- run a real backend
+first to measure anything meaningful.
 
 Usage (from the repo root):
     PYTHONPATH=src python src/scripts/extract_object_params.py --backend anthropic

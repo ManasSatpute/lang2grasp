@@ -1,49 +1,29 @@
 """Gymnasium-compatible wrapper around robosuite's ``Lift`` task (Franka Panda).
 
-robosuite ships its own ``GymWrapper``, but it targets the legacy OpenAI Gym API
-(4-tuple ``step``, no ``seed`` / ``options`` on ``reset``). Stable-Baselines3 >= 2.0
-speaks *Gymnasium*, so we wrap the raw robosuite environment directly.
+robosuite ships its own ``GymWrapper``, but it targets the legacy OpenAI Gym API;
+Stable-Baselines3 speaks Gymnasium, so this wraps the raw robosuite environment
+directly. Two details are handled explicitly for correctness: robosuite's ``done`` at
+the horizon is reported as ``truncated``, not ``terminated`` (else SB3 wrongly
+bootstraps a zero value there), and ``info["is_success"]`` is set every step so SB3's
+``EvalCallback`` can report ``eval/success_rate``.
 
-Two details matter for correctness and are handled explicitly:
+``"fingertip_force"`` is a genuine 6-dim MuJoCo sensor reading (``PandaGripperForce``,
+see ``objects/force_gripper.py``), always part of the observation for every config
+including the baseline. Whenever ``EnvConfig.object`` is set, the real contact force
+is compared each step against the object's ``crush_force_N``: exceeding it applies a
+reward penalty (``crush_penalty_coeff``) and by default ends the episode
+(``terminate_on_crush``), unconditionally. Only force transmitted through a pad that
+is *actually touching the object* counts (``_pads_touching_object``) -- the raw sensor
+also reads table bumps and the pads closing on empty air, which are not crushes.
+``grip_force_shaping`` separately adds an optional bonus for staying within
+``grip_force_min_N``/``max_N``.
 
-1. ``terminated`` vs ``truncated``. robosuite raises its ``done`` flag when the
-   horizon is reached. That is *truncation*, not termination. Reporting it as
-   ``terminated`` tells SB3 the value function is zero at the cut-off and
-   silently biases every bootstrap target.
-2. ``info["is_success"]``. SB3's ``EvalCallback`` aggregates this key into
-   ``eval/success_rate``. Without it you only ever see return, never task success.
-
-Fingertip force is a genuine MuJoCo sensor reading, not an estimate: every env uses
-``PandaGripperForce`` (``objects/force_gripper.py``), a Panda gripper variant with a
-3-axis ``<force>`` sensor on each fingertip pad, and ``"fingertip_force"`` -- a 6-dim
-``[left_fx,fy,fz, right_fx,fy,fz]`` vector -- is always part of the observation
-(``DEFAULT_OBS_KEYS``), for every config, baseline included. That matters: a real
-robot has this sensor regardless of whether it's holding an LLM-described object, so
-a force-conditioned policy's edge over the generic baseline can't just be "I have a
-sensor you don't."
-
-Crush behaviour is object-specific (keyed off ``ObjectParams.crush_force_N``, which
-only exists once ``EnvConfig.object`` is set): whenever ``object`` is set, every step
-computes ``contact_force_N = max(|left force|, |right force|)`` from the real sensor,
-and if it exceeds the *perceived* object's ``crush_force_N`` the episode pays a reward
-penalty proportional to the excess (``EnvConfig.crush_penalty_coeff``) and, by default,
-terminates (``EnvConfig.terminate_on_crush``) -- this is unconditional (not gated by
-``grip_force_shaping``), since fragility shouldn't be an opt-in experiment. Separately,
-``EnvConfig.grip_force_shaping`` still exists, but now controls *only* the optional
-"safe-hold" bonus for staying within the perceived object's ``grip_force_min_N``/``max_N``.
-
-**Golden physics vs. extracted perception.** ``EnvConfig.object`` is what actually gets
-built into the MuJoCo scene (``ParamLift``) -- the real/"golden" object, typically loaded
-from a trusted source (e.g. ``extraction.param_prompts.golden_object_params``) rather
-than an LLM guess. ``EnvConfig.extracted_object``, when set, is a *separate* (possibly
-imperfect) ``ObjectParams`` -- e.g. an LLM's extraction from a text prompt -- that the
-crush penalty/termination, the grip-force bonus, and ``include_object_z``'s z-vector are
-computed from instead: the policy is trained against what it *believes* about the
-object (from extraction), while what actually gets lifted (and how much it actually
-masses/how it actually slides) is the golden object. This is what lets a per-object run
-test robustness to extraction error, rather than extraction error simply not existing
-(golden == extracted) as it did before. ``extracted_object=None`` (the default) falls
-back to using ``object`` for perception too -- byte-for-byte the old behaviour.
+**Golden vs. extracted object.** ``EnvConfig.object`` is the real object actually
+built into the MuJoCo scene. ``EnvConfig.extracted_object``, when set, is a separate
+(possibly imperfect) ``ObjectParams`` -- e.g. an LLM's extraction -- that crush
+behaviour, the grip-force bonus, and ``include_object_z``'s z-vector are computed from
+instead, so the policy is trained against its *belief* about the object while the real
+physics come from ``object``. Left unset, perception falls back to ``object``.
 """
 
 from __future__ import annotations
@@ -82,6 +62,15 @@ OBJECT_Z_KEY = "object_z"
 #: reset()/step() -- not a robosuite-native obs_dict key.
 DEFAULT_OBS_KEYS: tuple[str, ...] = ("robot0_proprio-state", "object-state", "fingertip_force")
 
+#: `important_geoms` keys naming each finger's collision geoms, in `fingertip_force`
+#: order (left = `[:3]`, right = `[3:]`). Each entry is tried in order, so a gripper
+#: exposing only the coarser "left_finger"/"right_finger" grouping still works. Used by
+#: `RobosuiteLiftEnv._pads_touching_object` to gate the crush check on real contact.
+PAD_GEOM_KEYS: tuple[tuple[str, ...], ...] = (
+    ("left_fingerpad", "left_finger"),
+    ("right_fingerpad", "right_finger"),
+)
+
 
 @dataclass
 class EnvConfig:
@@ -92,95 +81,64 @@ class EnvConfig:
     controller: str = "OSC_POSE"
     horizon: int = 500
     control_freq: int = 20
-    #: robosuite's *default* for Lift is sparse (``reward_shaping=False``). Sparse
-    #: reward + random exploration on a 7-DoF arm means ~zero successes and no
-    #: learning signal, so we default to the shaped reward. Flip to False to
-    #: reproduce the true library default.
+    #: robosuite's own default is sparse (False); shaped is needed for random
+    #: exploration on a 7-DoF arm to ever see a learning signal.
     reward_shaping: bool = True
-    #: End the episode the moment the cube is lifted. Off by default: fixed-length
-    #: episodes keep the return comparable across runs.
+    #: End the episode the moment the cube is lifted. Off by default so episode
+    #: return stays comparable across runs.
     terminate_on_success: bool = False
     obs_keys: Sequence[str] = field(default_factory=lambda: DEFAULT_OBS_KEYS)
     render_mode: str | None = None
     camera_name: str = "agentview"
     camera_height: int = 256
     camera_width: int = 256
-    #: The object actually built into the MuJoCo scene (`ParamLift`) -- the "golden"/
-    #: ground-truth physical object. None reproduces the stock robosuite Lift cube
-    #: exactly (env_name="Lift", no ParamLift involved at all), unless
-    #: `randomize_object` is set instead (see below). Mutually exclusive with
-    #: `randomize_object`: there's no single fixed object once every episode draws
-    #: its own.
+    #: The "golden"/ground-truth object actually built into the MuJoCo scene
+    #: (`ParamLift`). None reproduces the stock robosuite Lift cube. Mutually
+    #: exclusive with `randomize_object`.
     object: ObjectParams | None = None
-    #: A separate, possibly-imperfect `ObjectParams` (e.g. an LLM's extraction from a
-    #: text prompt) that crush penalty/termination, the grip-force bonus, and
-    #: `include_object_z`'s z-vector are computed from *instead of* `object` -- i.e.
-    #: what the policy is rewarded/conditioned on is its belief about the object, not
-    #: the real physics it's actually lifting (`object`). None (the default) falls
-    #: back to `object` for perception too -- the old, coupled behaviour. Only
-    #: meaningful when `object` is set. See module docstring, "Golden physics vs.
-    #: extracted perception".
+    #: A separate, possibly-imperfect `ObjectParams` (e.g. an LLM extraction) that
+    #: crush behaviour, the grip-force bonus, and `include_object_z` are computed
+    #: from instead of `object`. None falls back to `object`. See module docstring.
     extracted_object: ObjectParams | None = None
 
-    #: The paradigm-switch mode (see `objects.object_params.sample_object_params`):
-    #: instead of one fixed per-object specialist, `ParamLift` draws a fresh
-    #: continuously-distributed `ObjectParams` (shape/size/density/friction) every
-    #: episode. Forces `hard_reset=True` in `suite.make` (a shape/size change needs a
-    #: MuJoCo recompile, unlike the fixed-object path's reused compiled model), which
-    #: is markedly slower per reset -- see `RobosuiteLiftEnv.__init__`.
+    #: Paradigm-switch mode: `ParamLift` draws a fresh `ObjectParams` every episode
+    #: instead of one fixed per-object specialist. Forces `hard_reset=True`, which is
+    #: markedly slower per reset (a shape/size change needs a MuJoCo recompile).
     randomize_object: bool = False
-    #: Only meaningful when `randomize_object=True`. Restricts sampling to this subset
-    #: of shapes; None samples uniformly over all of `sample_object_params`'s default
-    #: shapes.
+    #: Only meaningful when `randomize_object=True`; restricts sampling to this
+    #: subset of shapes, or all of them if None.
     randomize_shapes: tuple[Shape, ...] | None = None
 
-    #: Append a (possibly noisy) object physical-parameter vector `z` to the
-    #: observation -- `objects.object_params.object_params_to_noisy_z`, keyed
-    #: `rl.env.OBJECT_Z_KEY`. This is the "informed" pi_param variant that
-    #: FiLM-conditions on an estimated z, as opposed to pi_blind/pi_blind+hist, which
-    #: never see z at all. Requires `object` or `randomize_object`.
+    #: Append a (possibly noisy) object parameter vector `z` to the observation --
+    #: the `pi_param` paradigm-switch variant. Requires `object` or `randomize_object`.
     include_object_z: bool = False
-    #: Relative (fractional) Gaussian noise applied to z's continuous dims (size,
-    #: density, friction) -- z models a noisy sysID-style estimate, not ground truth.
-    #: 0.0 = exact/noiseless z. Only read when `include_object_z=True`.
+    #: Relative Gaussian noise on z's continuous dims; 0.0 = exact/noiseless z.
     object_z_noise_std: float = 0.1
 
-    #: pi_blind+hist's memory: when > 0, observations are wrapped
-    #: (`rl.env.HistoryObsWrapper`) to append a rolling window of the last
-    #: `history_len` steps' proprioception + fingertip force, oldest-first,
-    #: zero-padded at episode start. Paired with `rl.policies.HistoryGRUExtractor`,
-    #: which knows how to split the wrapped observation back apart. 0 = disabled
-    #: (pi_blind / pi_param / the per-object specialists all leave this at 0).
+    #: `pi_blind+hist`'s memory: when > 0, wraps observations (`HistoryObsWrapper`)
+    #: with a rolling window of the last `history_len` steps' proprioception + force.
+    #: 0 = disabled.
     history_len: int = 0
 
-    #: Add a reward bonus each step the real fingertip force falls inside
-    #: [object.grip_force_min_N, object.grip_force_max_N] -- a secure, non-crushing
-    #: hold. Requires `object` to be set. Off by default -- existing configs are
-    #: byte-for-byte unaffected. Does NOT gate crush behaviour any more (see
-    #: crush_penalty_coeff/terminate_on_crush below and the module docstring) --
-    #: fragility isn't optional the way this bonus is.
+    #: Reward bonus each step the real fingertip force stays within
+    #: [grip_force_min_N, grip_force_max_N]. Requires `object`. Off by default, and
+    #: does not gate crush behaviour (below) -- fragility isn't optional.
     grip_force_shaping: bool = False
-    #: Reward added each step the real per-finger contact force falls inside the
-    #: window above. Only applied when grip_force_shaping is True.
+    #: Bonus applied when grip_force_shaping is True and the force is in-window.
     grip_force_bonus: float = 0.1
-    #: Per-Newton reward penalty (lambda), applied whenever `object` is set and the
-    #: real fingertip force exceeds object.crush_force_N: reward -=
-    #: crush_penalty_coeff * (contact_force_N - object.crush_force_N). Unconditional
-    #: on `object` being set -- not gated by grip_force_shaping.
+    #: Per-Newton reward penalty applied whenever `object` is set and the real
+    #: fingertip force exceeds `object.crush_force_N`. Unconditional.
     crush_penalty_coeff: float = 0.1
-    #: End the episode the step fingertip force first exceeds object.crush_force_N.
-    #: Unconditional on `object` being set, same as crush_penalty_coeff -- a crushed
-    #: object is a real terminal state, not an optional shaping choice.
+    #: End the episode the step fingertip force first exceeds crush_force_N.
+    #: Unconditional, same as crush_penalty_coeff.
     terminate_on_crush: bool = True
 
     def __post_init__(self) -> None:
-        # JSON round-trips a tuple back as a list. Normalise on construction so a
-        # config and its reloaded snapshot compare equal, and so `rollout.py`
-        # rebuilds the exact observation layout the policy was trained on.
+        # JSON round-trips tuples back as lists; normalise so a config and its
+        # reloaded snapshot compare equal.
         self.obs_keys = tuple(self.obs_keys)
         if self.randomize_shapes is not None:
             self.randomize_shapes = tuple(self.randomize_shapes)
-        # Same round-trip concern: a loaded JSON snapshot hands back a plain dict.
         if isinstance(self.object, dict):
             self.object = ObjectParams(**self.object)
         if isinstance(self.extracted_object, dict):
@@ -204,18 +162,10 @@ def resolve_controller_config(controller_name: str, robot: str) -> dict[str, Any
     """Return a controller config across the robosuite 1.4 / 1.5 API split.
 
     robosuite 1.5 replaced the flat ``load_controller_config(default_controller=...)``
-    dict with a composite (per-body-part) config. Composite configs are looked up by
-    *composite* name (e.g. ``"BASIC"``) in ``REGISTERED_COMPOSITE_CONTROLLERS_DICT`` --
-    ``"OSC_POSE"``/``"OSC_POSITION"``/``"JOINT_VELOCITY"``/etc. are *part* (single-arm)
-    controller names, and asserting one of those against that registry crashes.
-
-    A hardcoded ``"BASIC"`` here would have silently discarded ``controller_name``
-    (it happens to match "BASIC" for the OSC_POSE default this project ships, but
-    would keep silently landing there for any other value in a config's ``controller``
-    field). Instead, use robosuite's own upgrade path: load the named part-controller
-    block, then let ``refactor_composite_controller_config`` wrap it into the composite
-    shape -- confirmed against the installed robosuite 1.5.1 source
-    (``robosuite/controllers/composite/composite_controller_factory.py``).
+    dict with a composite (per-body-part) config, looked up by a different name
+    convention. This loads the named part-controller block and lets robosuite's own
+    ``refactor_composite_controller_config`` wrap it into the composite shape, so any
+    ``controller_name`` (not just the default) resolves correctly on either version.
     """
     try:
         from robosuite.controllers import load_part_controller_config
@@ -276,17 +226,12 @@ class RobosuiteLiftEnv(gym.Env):
             object_kwargs["object_params"] = (
                 (lambda: sample_object_params(shapes=shapes)) if shapes else sample_object_params
             )
-            # A shape/size change needs a MuJoCo recompile, so a fresh per-episode
-            # sample requires hard_reset=True -- ~10x slower per reset than the fixed
-            # per-object path below (see that branch's `hard_reset=False` comment).
+            # A shape/size change needs a MuJoCo recompile every reset.
             hard_reset = True
 
-        # The genuine fingertip force sensor (module docstring) is Panda-specific --
-        # PandaGripperForce's derived XML is built from panda_gripper.xml. Every
-        # config this project ships uses robot="Panda" (see README.md); fall back to
-        # that robot's own default gripper for anything else rather than erroring, so
-        # an exploratory non-Panda run degrades to "no fingertip_force sensor" instead
-        # of crashing.
+        # PandaGripperForce's fingertip sensor is Panda-specific; fall back to the
+        # robot's own default gripper for anything else (degrades to an all-zero
+        # fingertip_force instead of crashing).
         if self.cfg.robot == "Panda":
             object_kwargs["gripper_types"] = "PandaGripperForce"
         else:
@@ -315,10 +260,7 @@ class RobosuiteLiftEnv(gym.Env):
             reward_shaping=self.cfg.reward_shaping,
             horizon=self.cfg.horizon,
             control_freq=self.cfg.control_freq,
-            ignore_done=True,  # we own episode termination; see module docstring
-            # False (fixed object / stock cube): ~10x faster resets, re-uses the
-            # compiled MjModel. True (randomize_object): forced above, since a fresh
-            # per-episode shape/size sample needs a MuJoCo recompile every reset.
+            ignore_done=True,  # this wrapper owns episode termination; see module docstring
             hard_reset=hard_reset,
             **object_kwargs,
         )
@@ -329,6 +271,7 @@ class RobosuiteLiftEnv(gym.Env):
         )
 
         self._fingertip_force_warned = False  # log the degradation warning once, not every step
+        self._pad_geoms_warned = False
         raw_obs_dict = self._env.reset()
         self._current_object = self._resolve_current_object()
         obs_dim = self._flatten(self._augment_obs_dict(raw_obs_dict)).shape[0]
@@ -359,12 +302,8 @@ class RobosuiteLiftEnv(gym.Env):
         )
 
     def obs_slices(self) -> dict[str, slice]:
-        """The contiguous flat-observation slice occupied by each key in `_obs_keys`,
-        in order. Requires `reset()` to have been called at least once (sizes each
-        modality off `self.last_obs_dict`). Used by `HistoryObsWrapper` to pull out
-        the proprio/force sub-vectors it historizes, without hardcoding `_flatten`'s
-        layout a second time.
-        """
+        """The contiguous flat-observation slice for each key in `_obs_keys`. Requires
+        `reset()` to have been called first. Used by `HistoryObsWrapper`."""
         if not self.last_obs_dict:
             raise RuntimeError("obs_slices() requires reset() to have been called first.")
         slices: dict[str, slice] = {}
@@ -380,13 +319,8 @@ class RobosuiteLiftEnv(gym.Env):
         return bool(check()) if callable(check) else False
 
     def _read_fingertip_forces_N(self) -> np.ndarray:
-        """Real per-pad 3-axis contact force (N) from PandaGripperForce's MuJoCo sensors.
-
-        Returns a (6,) float32 vector ``[left_fx,fy,fz, right_fx,fy,fz]``. All-zero
-        (with a one-time warning) if the active gripper doesn't have these sensors --
-        e.g. cfg.robot != "Panda", see __init__. See module docstring and
-        objects/force_gripper.py for how the sensors are added.
-        """
+        """Real per-pad 3-axis contact force (N), (6,) float32. All-zero (with a
+        one-time warning) if the active gripper has no force sensors."""
         robot = self._env.robots[0]
         arm = robot.arms[0]
         gripper = robot.gripper[arm]
@@ -405,6 +339,41 @@ class RobosuiteLiftEnv(gym.Env):
         forces = [robot.get_sensor_measurement(sensors[name]) for name in PAD_FORCE_SENSOR_NAMES]
         return np.concatenate(forces).astype(np.float32)
 
+    def _pads_touching_object(self) -> tuple[bool, bool]:
+        """``(left, right)``: is each finger pad actually in contact with the object?
+
+        The fingertip sensor reads whatever load is transmitted through that pad --
+        the pad bumping the table, the two pads meeting on empty air, or just the arm
+        accelerating -- none of which is the gripper squeezing the object. Without this
+        gate, a `crush_force_N` in the 5-12 N range (every fragile object, and the whole
+        `width_mass_set`) terminates episodes during the reach phase, so training never
+        reaches a grasp and `eval/success_rate` stays pinned at 0. Falls back to
+        ``(True, True)`` -- i.e. the old ungated reading -- if the gripper doesn't
+        expose per-finger geoms to check against.
+        """
+        obj = getattr(self._env, "cube", None)
+        if obj is None:
+            return (True, True)
+
+        robot = self._env.robots[0]
+        gripper = robot.gripper[robot.arms[0]]
+        geoms = gripper.important_geoms
+        touching: list[bool] = []
+        for keys in PAD_GEOM_KEYS:
+            pad_geoms = next((geoms[key] for key in keys if key in geoms), None)
+            if pad_geoms is None:
+                if not self._pad_geoms_warned:
+                    LOGGER.warning(
+                        "Gripper %s exposes none of %s in important_geoms; the crush "
+                        "check falls back to the ungated fingertip force.",
+                        type(gripper).__name__,
+                        keys,
+                    )
+                    self._pad_geoms_warned = True
+                return (True, True)
+            touching.append(bool(self._env.check_contact(pad_geoms, obj)))
+        return touching[0], touching[1]
+
     def _augment_obs_dict(self, obs_dict: dict[str, np.ndarray]) -> dict[str, np.ndarray]:
         """A copy of robosuite's obs_dict with the real fingertip-force reading (and,
         if `include_object_z`, this episode's noisy object-parameter vector) added."""
@@ -417,20 +386,8 @@ class RobosuiteLiftEnv(gym.Env):
         return obs_dict
 
     def _resolve_current_object(self) -> ObjectParams | None:
-        """This episode's *perceived* `ObjectParams` -- what crush penalty/
-        termination, the grip-force bonus, and `include_object_z`'s z-vector are
-        computed from. Fixed-object runs use `cfg.extracted_object` when set
-        (falling back to `cfg.object`, the golden physical object, otherwise -- see
-        module docstring, "Golden physics vs. extracted perception"); randomized runs
-        use whatever `ParamLift` actually sampled this episode (there is no separate
-        extracted-vs-golden split under `randomize_object` yet); no `object` at all
-        (the stock-cube baseline) has no perceived object either.
-
-        Must be called *after* `self._env.reset()`: in the `randomize_object` case,
-        `ParamLift._load_model()` (invoked by that reset, since `hard_reset=True`)
-        has already drawn this episode's sample by the time `reset()` returns, and
-        `self._env.object_params` reflects it.
-        """
+        """This episode's *perceived* `ObjectParams` (see module docstring, "Golden vs.
+        extracted object"). Must be called after `self._env.reset()`."""
         if self.cfg.object is not None:
             return self.cfg.extracted_object or self.cfg.object
         if self.cfg.randomize_object:
@@ -454,10 +411,8 @@ class RobosuiteLiftEnv(gym.Env):
     ) -> tuple[np.ndarray, dict[str, Any]]:
         super().reset(seed=seed)
         if seed is not None:
-            # robosuite samples object placements (and, when randomize_object is set,
-            # this episode's ObjectParams -- see sample_object_params) from the
-            # *global* numpy RNG, so per-instance seeding via self.np_random is not
-            # enough. This is a robosuite limitation, not a Gymnasium one.
+            # robosuite samples object placement (and, under randomize_object, the
+            # episode's ObjectParams) from the global numpy RNG, not a per-instance one.
             np.random.seed(seed)
         self._elapsed_steps = 0
         raw_obs_dict = self._env.reset()
@@ -480,10 +435,17 @@ class RobosuiteLiftEnv(gym.Env):
         crushed = False
         if self._current_object is not None:
             fingertip_force = obs_dict["fingertip_force"]
-            contact_force_N = float(
-                max(np.linalg.norm(fingertip_force[:3]), np.linalg.norm(fingertip_force[3:]))
+            left_N = float(np.linalg.norm(fingertip_force[:3]))
+            right_N = float(np.linalg.norm(fingertip_force[3:]))
+            # Only load transmitted through a pad that is genuinely on the object counts
+            # as grip force -- see _pads_touching_object for why this gate is load-bearing.
+            left_touching, right_touching = self._pads_touching_object()
+            contact_force_N = max(
+                left_N if left_touching else 0.0, right_N if right_touching else 0.0
             )
             info["fingertip_force_N"] = contact_force_N
+            #: Ungated reading, for diagnosing the gate itself. Not used by the reward.
+            info["fingertip_force_raw_N"] = max(left_N, right_N)
 
             crush_excess_N = max(0.0, contact_force_N - self._current_object.crush_force_N)
             if crush_excess_N > 0.0:
@@ -518,23 +480,17 @@ class RobosuiteLiftEnv(gym.Env):
         self._env.close()
 
 
-#: Modalities `HistoryObsWrapper` historizes by default -- proprioception + the real
-#: fingertip force sensor. Not object-state (cube pose): that's fully informative each
-#: single step, so there's nothing for a temporal window to add there. See
-#: `EnvConfig.history_len`'s docstring.
+#: Modalities `HistoryObsWrapper` historizes by default -- proprioception + fingertip
+#: force. Not object-state (cube pose), which is fully informative each single step.
 DEFAULT_HISTORY_KEYS: tuple[str, ...] = ("robot0_proprio-state", "fingertip_force")
 
 
 class HistoryObsWrapper(gym.Wrapper):
     """Appends a rolling window of the last ``history_len`` steps' proprioception +
-    fingertip force to the observation -- pi_blind+hist's only source of implicit
-    system identification, since it (like pi_blind) never sees an object-parameter z.
-
-    Output layout: ``[current full obs (unchanged, dim D), history block
-    (history_len * step_dim, oldest-first, zero-padded at episode start)]``.
-    ``rl.policies.HistoryGRUExtractor`` is the matching SB3 features extractor that
-    knows how to split this back apart into ``(D, history_len, step_dim)`` and run a
-    GRU over the history block -- the two must agree on ``history_len``/``history_keys``.
+    fingertip force to the observation -- ``pi_blind+hist``'s only source of implicit
+    system identification. Output layout: ``[current obs, history block]``, oldest
+    step first, zero-padded at episode start. Pairs with
+    ``rl.policies.HistoryGRUExtractor``, which splits this back apart.
     """
 
     def __init__(
@@ -593,13 +549,9 @@ def make_lift_env(cfg: EnvConfig | None = None) -> gym.Env:
 
 
 def history_dims(cfg: EnvConfig, history_keys: tuple[str, ...] = DEFAULT_HISTORY_KEYS) -> tuple[int, int, int]:
-    """``(current_dim, history_len, step_dim)`` for ``rl.policies.HistoryGRUExtractor``.
-
-    Builds (and immediately closes) one throwaway, un-wrapped env to measure the
-    dimensions ``HistoryObsWrapper``/``HistoryGRUExtractor`` need to agree on, so a
-    caller (``scripts/train_paradigm.py``) never has to hardcode them by hand.
-    Requires ``cfg.history_len > 0``.
-    """
+    """``(current_dim, history_len, step_dim)`` for ``rl.policies.HistoryGRUExtractor``,
+    measured from a throwaway env so callers never hardcode them. Requires
+    ``cfg.history_len > 0``."""
     if cfg.history_len <= 0:
         raise ValueError(f"cfg.history_len must be positive, got {cfg.history_len}")
     base_env = RobosuiteLiftEnv(cfg)

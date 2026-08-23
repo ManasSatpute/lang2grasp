@@ -1,26 +1,14 @@
 """Phase 2, the paradigm switch: train pi_blind / pi_blind+hist / pi_param against a
 *continuous distribution* of objects, instead of one per-object specialist.
 
-All three variants share the same domain-randomized env
-(``EnvConfig.randomize_object`` -- see ``objects.object_params.sample_object_params``):
-a fresh ``ObjectParams`` (shape/size/density/friction) is sampled every episode. They
-differ only in what the policy is allowed to see:
-
-- ``blind``: nothing extra. Memoryless -- the honest "can't tell objects apart"
-  floor.
-- ``blind_hist``: a GRU (``rl.policies.HistoryGRUExtractor``) over the last
-  ``--history-len`` steps of proprioception + fingertip force
-  (``rl.env.HistoryObsWrapper``) -- can do implicit system identification from how
-  the arm's own sensors responded, without ever being told an object parameter
-  directly. This is the honest baseline to beat: it's memoryless pi_blind's ceiling
-  in this project without cheating via z.
-- ``param``: a (possibly noisy) object-parameter vector z FiLM-conditions the policy
-  (``rl.policies.FiLMExtractor``, ``EnvConfig.include_object_z``) -- the "informed"
-  variant, told approximately what it's holding rather than having to infer it.
-
-Per-object specialists (``scripts/train_object.py``/``train_all_objects.py``) are the
-oracle topline this project is trying to approach cheaply, not a comparator baseline
--- this script does not touch them.
+All three variants share the same domain-randomized env (``EnvConfig.
+randomize_object``): a fresh ``ObjectParams`` is sampled every episode. They differ
+only in what the policy sees: ``blind`` sees nothing extra (the memoryless floor);
+``blind_hist`` adds a GRU (``rl.policies.HistoryGRUExtractor``) over recent
+proprioception + force for implicit system identification; ``param`` FiLM-conditions
+on a (possibly noisy) object-parameter vector z (``rl.policies.FiLMExtractor``).
+Per-object specialists (``scripts/train_object.py``) are a separate oracle topline,
+untouched by this script.
 
 Usage (from the repo root):
     PYTHONPATH=src python src/scripts/train_paradigm.py --variant blind \\

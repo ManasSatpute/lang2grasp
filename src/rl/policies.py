@@ -1,21 +1,11 @@
 """Custom SB3 feature extractors for the paradigm-switch policy variants.
 
 Three variants are trained against the same domain-randomized env
-(``EnvConfig.randomize_object``, see ``scripts/train_paradigm.py``):
-
-- pi_blind: stock ``MlpPolicy`` (SB3's default ``FlattenExtractor``) -- no custom
-  extractor needed.
-- pi_blind+hist: :class:`HistoryGRUExtractor`, paired with ``rl.env.HistoryObsWrapper``
-  (``EnvConfig.history_len > 0``). Memoryless pi_blind can't tell objects apart within
-  an episode; this variant can do implicit system identification from how the arm's
-  proprioception/force responded over the last few steps.
-- pi_param: :class:`FiLMExtractor`, paired with ``EnvConfig.include_object_z``. Told
-  (approximately -- see ``objects.object_params.object_params_to_noisy_z``) what
-  object it's dealing with, rather than having to infer it.
-
-Per-object specialists (``scripts/train_object.py``/``train_all_objects.py``) use none
-of these -- they stay stock ``MlpPolicy``, since they're the oracle topline, not a
-paradigm variant.
+(``EnvConfig.randomize_object``, see ``scripts/train_paradigm.py``): ``pi_blind`` uses
+the stock ``MlpPolicy``/``FlattenExtractor``; ``pi_blind+hist`` uses
+:class:`HistoryGRUExtractor` for implicit system identification from recent
+proprioception/force; ``pi_param`` uses :class:`FiLMExtractor`, conditioned on a
+(possibly noisy) object-parameter vector z. Per-object specialists use none of these.
 """
 
 from __future__ import annotations
@@ -31,17 +21,10 @@ from objects.object_params import Z_DIM
 class HistoryGRUExtractor(BaseFeaturesExtractor):
     """pi_blind+hist's feature extractor.
 
-    Input layout (see ``rl.env.HistoryObsWrapper``): ``[current obs (current_dim,),
-    history block (history_len * step_dim,)]``, history oldest-first. Splits the two
-    apart, runs a GRU over the history block, and returns
-    ``[current obs, GRU final hidden state]`` -- SB3's own ``net_arch`` MLP (SAC's
-    actor/critic heads) does everything downstream of that, exactly as it would on
-    top of a plain ``MlpPolicy``.
-
-    ``current_dim``/``history_len``/``step_dim`` must match the
-    ``HistoryObsWrapper``/``EnvConfig`` the env was actually built with -- see
-    ``rl.env.history_dims``, which derives them from an ``EnvConfig`` instead of
-    requiring them to be hand-computed and kept in sync.
+    Splits ``rl.env.HistoryObsWrapper``'s ``[current obs, history block]`` layout back
+    apart, runs a GRU over the history block, and returns ``[current obs, GRU final
+    hidden state]``. ``current_dim``/``history_len``/``step_dim`` must match the env
+    the model was built with -- see ``rl.env.history_dims``.
     """
 
     def __init__(
@@ -76,14 +59,9 @@ class HistoryGRUExtractor(BaseFeaturesExtractor):
 
 
 class FiLMExtractor(BaseFeaturesExtractor):
-    """pi_param's feature extractor: FiLM-conditions an MLP trunk over the ordinary
-    state observation on a (possibly noisy) object-parameter vector z.
-
-    Input layout (see ``EnvConfig.include_object_z``/``rl.env.OBJECT_Z_KEY``): z is
-    always the *last* ``z_dim`` entries of the observation, since
-    ``RobosuiteLiftEnv.__init__`` appends ``OBJECT_Z_KEY`` after every other
-    configured ``obs_key``. ``gamma``/``beta`` modulate the trunk's hidden
-    activations -- ``h' = gamma * h + beta`` (Perez et al., 2018, FiLM).
+    """pi_param's feature extractor: FiLM-conditions an MLP trunk over the state
+    observation on a (possibly noisy) object-parameter vector z, the last ``z_dim``
+    entries of the observation (``h' = gamma * h + beta``, Perez et al. 2018).
     """
 
     def __init__(

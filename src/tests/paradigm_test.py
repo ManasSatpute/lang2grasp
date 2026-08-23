@@ -1,13 +1,8 @@
 #!/usr/bin/env python3
-"""Unit-level checks for the Phase 2 paradigm-switch building blocks (see
-scripts/train_paradigm.py's module docstring): the continuous ObjectParams sampler,
-the z-vector encoding pi_param FiLM-conditions on, and the GRU/FiLM feature
-extractors pi_blind+hist/pi_param use.
-
-Deliberately does *not* touch robosuite or a real env: `objects.object_params` has no
-simulator dependency, and `rl.policies`'s extractors are plain torch modules that only
-need the right tensor shapes -- so this runs anywhere torch/stable-baselines3 are
-installed, without a MuJoCo/robosuite stack (unlike smoke_test.py/force_sensor_test.py).
+"""Unit-level checks for the paradigm-switch building blocks (see
+scripts/train_paradigm.py): the continuous ObjectParams sampler, the z-vector encoding
+pi_param FiLM-conditions on, and the GRU/FiLM feature extractors. Deliberately does
+*not* touch robosuite or a real env, so it runs without a MuJoCo stack.
 
 Usage (from the repo root):
     PYTHONPATH=src python src/tests/paradigm_test.py
